@@ -3,5 +3,9 @@
     "source.fixAll": "explicit",
     "source.organizeImports": "explicit",
     "source.sortMembers": "explicit"
-  }
+  },
+  "workbench.colorTheme": "Dark 2026",
+  "workbench.preferredHighContrastLightColorTheme": "Expo Dark",
+  "workbench.preferredLightColorTheme": "Light 2026",
+  "workbench.commandPalette.showAskInChat": true
 }
