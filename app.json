@@ -38,7 +38,17 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["peripheral", "central"],
+          "bluetoothAlwaysPermission": "Allow cave-controller to connect to the Crazyflie drone.",
+          "bluetoothPeripheralPermission": "Allow cave-controller to connect to the Crazyflie drone."
+        }
+      ],
+      "expo-dev-client"
     ],
     "experiments": {
       "typedRoutes": true,
