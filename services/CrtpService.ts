@@ -1,120 +1,367 @@
-import * as base64 from 'base64-js';
+// services/CrtpService.ts
+// CRTP protocol encoding/decoding for the Crazyflie over BLE.
+// No Bluetooth code lives here on purpose — this is pure byte manipulation.
 
-// CRTP (Crazyflie RealTime Protocol) Service
-// Header Byte Structure: (port << 4) | (link << 2) | channel
+// ---------- CRTP ports ----------
+export const PORT_CONSOLE = 0;
+export const PORT_PARAM = 2;
+export const PORT_COMMANDER = 3;
+export const PORT_MEM = 4;
+export const PORT_LOG = 5;
 
-export class CrtpService {
-  /**
-   * Generates a base64 encoded CRTP packet.
-   * @param port CRTP Port (0-15)
-   * @param channel CRTP Channel (0-3)
-   * @param payload Array of bytes (numbers 0-255)
-   * @param link CRTP Link (usually 0)
-   */
-  static generateCrtpPacket(port: number, channel: number, payload: number[], link: number = 0): string {
-    const header = (port << 4) | (link << 2) | channel;
-    const packetBytes = new Uint8Array([header, ...payload]);
-    return base64.fromByteArray(packetBytes);
+// ---------- Param subsystem channels ----------
+export const PARAM_CHAN_TOC = 0;
+export const PARAM_CHAN_READ = 1;
+export const PARAM_CHAN_WRITE = 2;
+
+// TOC commands (protocol "v2", what current firmware uses)
+export const PARAM_CMD_GET_ITEM = 2;
+export const PARAM_CMD_GET_INFO = 3;
+
+export type ParamType =
+  | "uint8"
+  | "uint16"
+  | "uint32"
+  | "int8"
+  | "int16"
+  | "int32"
+  | "float";
+
+// ---------- base64 (react-native-ble-plx speaks base64, not bytes) ----------
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+export function bytesToBase64(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i];
+    const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    out += B64[b0 >> 2];
+    out += B64[((b0 & 0x03) << 4) | (b1 >> 4)];
+    out += i + 1 < bytes.length ? B64[((b1 & 0x0f) << 2) | (b2 >> 6)] : "=";
+    out += i + 2 < bytes.length ? B64[b2 & 0x3f] : "=";
   }
+  return out;
+}
 
-  /**
-   * Generates a "Zero Thrust / Hover" setpoint for Commander (Port 3, Channel 0)
-   * The basic commander packet format is:
-   * - Roll (float32)
-   * - Pitch (float32)
-   * - Yaw (float32)
-   * - Thrust (uint16_t)
-   */
-  static createHoverSetpoint(): string {
-    const buffer = new ArrayBuffer(14);
-    const view = new DataView(buffer);
-    
-    // Roll = 0.0 (float32)
-    view.setFloat32(0, 0.0, true); // true for little-endian
-    // Pitch = 0.0 (float32)
-    view.setFloat32(4, 0.0, true);
-    // Yaw = 0.0 (float32)
-    view.setFloat32(8, 0.0, true);
-    // Thrust = 0 (uint16)
-    view.setUint16(12, 0, true);
-
-    const payload = Array.from(new Uint8Array(buffer));
-    
-    // Commander Port = 3, Channel = 0
-    return this.generateCrtpPacket(3, 0, payload);
+export function base64ToBytes(s: string): Uint8Array {
+  const clean = s.replace(/[^A-Za-z0-9+/]/g, "");
+  const out = new Uint8Array((clean.length * 3) >> 2);
+  let p = 0,
+    buf = 0,
+    bits = 0;
+  for (let i = 0; i < clean.length; i++) {
+    buf = (buf << 6) | B64.indexOf(clean[i]);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out[p++] = (buf >> bits) & 0xff;
+    }
   }
+  return out.subarray(0, p);
+}
 
-  /**
-   * Generates a Parameter Write packet (Port 2, Channel 2)
-   * @param paramId The 16-bit ID of the parameter
-   * @param value The value to write
-   * @param type The type of the parameter ('uint8' | 'uint16' | 'float')
-   */
-  static writeParameter(paramId: number, value: number, type: 'uint8' | 'uint16' | 'float'): string {
-    const valueSize = type === 'uint8' ? 1 : type === 'uint16' ? 2 : 4;
-    const buffer = new ArrayBuffer(2 + valueSize);
-    const view = new DataView(buffer);
-    
-    // Param ID (uint16_t, little-endian)
-    view.setUint16(0, paramId, true);
-    
-    // Value
-    if (type === 'uint8') {
-      view.setUint8(2, value);
-    } else if (type === 'uint16') {
-      view.setUint16(2, value, true);
-    } else if (type === 'float') {
-      view.setFloat32(2, value, true);
+// ---------- CRTP header ----------
+// Layout: [ port:4 | link:2 | channel:2 ]. The official client always sets the
+// link bits to 3; the firmware masks them off, so we match the official client.
+export function crtpHeader(port: number, channel: number): number {
+  return ((port & 0x0f) << 4) | (3 << 2) | (channel & 0x03);
+}
+
+export function crtpPort(header: number): number {
+  return (header >> 4) & 0x0f;
+}
+
+export function crtpChannel(header: number): number {
+  return header & 0x03;
+}
+
+// ---------- BLE fragmentation (CRTPUP / CRTPDOWN control byte) ----------
+// Control byte: bit 7 = Start, bits 5-6 = PID, bits 0-4 = Length.
+// A BLE write carries the control byte + up to 19 bytes of CRTP packet.
+export function fragmentForBle(packet: Uint8Array, pid: number): Uint8Array[] {
+  const frames: Uint8Array[] = [];
+  const headLen = Math.min(19, packet.length);
+
+  const ctrl = 0x80 | ((pid & 0x03) << 5) | ((packet.length - 1) & 0x1f);
+  const first = new Uint8Array(1 + headLen);
+  first[0] = ctrl;
+  first.set(packet.subarray(0, headLen), 1);
+  frames.push(first);
+
+  if (packet.length > 19) {
+    const rest = packet.subarray(19);
+    const second = new Uint8Array(1 + rest.length);
+    second[0] = (pid & 0x03) << 5; // Start = 0, Length = 0
+    second.set(rest, 1);
+    frames.push(second);
+  }
+  return frames;
+}
+
+// Diagnostics only — temporary, verbose hex logging for CrtpReassembler.push.
+const reasmHex = (bytes: Uint8Array | number[]): string =>
+  Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join(" ");
+
+// Rebuilds whole CRTP packets from the fragments arriving on CRTPDOWN.
+// Control byte: bits 5-6 = pid, bits 0-4 = total CRTP packet length.
+//
+// The drone's downlink framing does NOT clear the start bit (bit 7) on
+// continuation frames — a continuation's control byte can be bit-for-bit
+// identical to the frame that opened it. So completion is driven entirely by
+// buffer state (do we have an open buffer, does this frame's pid match it),
+// never by re-reading a "start" bit.
+export class CrtpReassembler {
+  private buf: number[] = [];
+  private bufferedPid = -1;
+  private bufferedLength = 0; // 0 means "no buffer open"
+
+  push(frame: Uint8Array): Uint8Array | null {
+    if (frame.length === 0) return null;
+    const ctrl = frame[0];
+    const length = ctrl & 0x1f;
+    const pid = (ctrl & 0x60) >> 5;
+    const payload = frame.subarray(1);
+
+    if (this.bufferedLength > 0 && pid === this.bufferedPid) {
+      // Continuation of an already-open buffer.
+      console.log(
+        `[reasm cont] ctrl=0x${ctrl.toString(16).padStart(2, "0")} pid=${pid} bufBefore=${this.buf.length} contPayloadLen=${payload.length} contBytes=${reasmHex(payload)}`
+      );
+      this.buf = this.buf.concat(Array.from(payload));
+      console.log(`[reasm cont] bufAfter=${reasmHex(this.buf)}`);
+      if (this.buf.length >= this.bufferedLength) {
+        const done = new Uint8Array(this.buf.slice(0, this.bufferedLength));
+        console.log(`[crtp reasm] completed pid=${pid} total=${this.bufferedLength}`);
+        console.log(`[reasm deliver] len=${done.length} bytes=${reasmHex(done)}`);
+        this.buf = [];
+        this.bufferedPid = -1;
+        this.bufferedLength = 0;
+        return done;
+      }
+      return null;
     }
 
-    const payload = Array.from(new Uint8Array(buffer));
-    
-    // Parameter Port = 2, Channel = 2 (Write)
-    return this.generateCrtpPacket(2, 2, payload);
-  }
+    // No open buffer, or pid differs — this is the start of a new packet.
+    this.buf = [];
+    this.bufferedPid = -1;
+    this.bufferedLength = 0;
 
-  /**
-   * Generates a Memory Read Request packet (Port 4, Channel 1)
-   * @param address Start address to read from
-   * @param length Number of bytes to read (MTU safe, e.g., 12 bytes = 2 points)
-   * @param memType Type of memory (default to EEPROM/SRAM ID)
-   */
-  static createMemoryReadRequest(address: number, length: number, memType: number = 1): string {
-    const buffer = new ArrayBuffer(6);
-    const view = new DataView(buffer);
-    
-    view.setUint8(0, memType);
-    view.setUint32(1, address, true); // little-endian address
-    view.setUint8(5, length);
-    
-    const payload = Array.from(new Uint8Array(buffer));
-    return this.generateCrtpPacket(4, 1, payload);
-  }
-
-  /**
-   * Parses the raw byte array of flight data into [x, y, z] float meters
-   * @param data The concatenated raw byte array from the drone
-   * @returns Array of [X, Y, Z] positions
-   */
-  static parseFlightData(data: Uint8Array): [number, number, number][] {
-    const points: [number, number, number][] = [];
-    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    
-    // Each point is 6 bytes (int16_t x, int16_t y, int16_t z)
-    for (let i = 0; i < data.length; i += 6) {
-      if (i + 5 >= data.length) break; // prevent overflow
-      
-      const xMm = view.getInt16(i, true);
-      const yMm = view.getInt16(i + 2, true);
-      const zMm = view.getInt16(i + 4, true);
-      
-      points.push([
-        xMm / 1000.0,
-        yMm / 1000.0,
-        zMm / 1000.0
-      ]);
+    if (payload.length >= length) {
+      // The whole packet fit in this one notification.
+      const done = new Uint8Array(payload.slice(0, length));
+      console.log(`[reasm deliver] len=${done.length} bytes=${reasmHex(done)}`);
+      return done;
     }
-    
-    return points;
+
+    this.buf = Array.from(payload);
+    this.bufferedPid = pid;
+    this.bufferedLength = length;
+    console.log(`[crtp reasm] opened pid=${pid} expected=${length} got=${payload.length}`);
+    console.log(
+      `[reasm open] ctrl=0x${ctrl.toString(16).padStart(2, "0")} field=${length} payloadLen=${payload.length} bytes=${reasmHex(payload)}`
+    );
+    return null;
+  }
+
+  reset() {
+    this.buf = [];
+    this.bufferedPid = -1;
+    this.bufferedLength = 0;
   }
 }
+
+// ---------- Parameter TOC ----------
+export interface ParamEntry {
+  id: number;
+  group: string;
+  name: string;
+  fullName: string; // "mission.state"
+  type: ParamType;
+  readOnly: boolean;
+}
+
+// Type byte encoding from the firmware's param.h:
+//   bits 0-1 = size, bit 2 = float flag, bit 3 = unsigned flag, 0x40 = read-only.
+const TYPE_TABLE: Record<number, ParamType> = {
+  0x00: "int8",
+  0x01: "int16",
+  0x02: "int32",
+  0x06: "float",
+  0x08: "uint8",
+  0x09: "uint16",
+  0x0a: "uint32",
+};
+
+export function decodeParamType(typeByte: number): ParamType {
+  return TYPE_TABLE[typeByte & 0x0f] ?? "uint8";
+}
+
+export function paramGetInfoPacket(): Uint8Array {
+  return new Uint8Array([
+    crtpHeader(PORT_PARAM, PARAM_CHAN_TOC),
+    PARAM_CMD_GET_INFO,
+  ]);
+}
+
+export function paramGetItemPacket(id: number): Uint8Array {
+  return new Uint8Array([
+    crtpHeader(PORT_PARAM, PARAM_CHAN_TOC),
+    PARAM_CMD_GET_ITEM,
+    id & 0xff,
+    (id >> 8) & 0xff,
+  ]);
+}
+
+export function parseParamInfo(
+  pkt: Uint8Array,
+): { count: number; crc: number } | null {
+  if (pkt.length < 8) return null;
+  if (crtpPort(pkt[0]) !== PORT_PARAM || pkt[1] !== PARAM_CMD_GET_INFO)
+    return null;
+  const count = pkt[2] | (pkt[3] << 8);
+  const crc = (pkt[4] | (pkt[5] << 8) | (pkt[6] << 16) | (pkt[7] << 24)) >>> 0;
+  return { count, crc };
+}
+
+// Parameter names longer than ~13 characters are missing their last byte —
+// the BLE connection is capped at a 20-byte notification MTU regardless of
+// requestMTU, so a name needing 21 bytes loses its final character. When the
+// lost byte was the NUL terminator, the next byte in the packet gets absorbed
+// into the name instead (e.g. "mission.height" -> "mission.heighte").
+const KNOWN_PARAM_NAMES = [
+  "deck.bcFlow2", "deck.bcMultiranger", "deck.bcZRanger", "deck.bcZRanger2",
+  "deck.bcLedRing", "deck.bcBuzzer", "deck.bcOA", "deck.bcLighthouse4",
+  "deck.bcUSD", "deck.bcDWM1000", "deck.bcAI",
+  "mission.state", "mission.timer", "mission.height", "mission.maxtime",
+  "mission.sampledist", "mission.vbatmin",
+  "pm.lowVoltage", "pm.criticalLowVoltage",
+];
+
+export function repairParamName(raw: string): string {
+  if (KNOWN_PARAM_NAMES.includes(raw)) return raw;
+
+  const trimmed = raw.slice(0, -1);
+  const candidates = KNOWN_PARAM_NAMES.filter((known) => {
+    // Plain truncation: raw is the known name with its tail cut off.
+    if (known.slice(0, raw.length) === raw) return true;
+    // Lost NUL terminator: raw is the known name plus one absorbed byte.
+    if (known.startsWith(trimmed) && (known.length === trimmed.length || known.length === trimmed.length + 1)) {
+      return true;
+    }
+    return false;
+  });
+
+  if (candidates.length === 1) {
+    console.warn(`[CrtpService] repaired truncated param name "${raw}" -> "${candidates[0]}"`);
+    return candidates[0];
+  }
+  return raw;
+}
+
+export function parseParamItem(pkt: Uint8Array): ParamEntry | null {
+  // [header][cmd][id_lo][id_hi][type][group\0][name\0]
+  if (pkt.length < 6) return null;
+  if (crtpPort(pkt[0]) !== PORT_PARAM || pkt[1] !== PARAM_CMD_GET_ITEM)
+    return null;
+
+  const id = pkt[2] | (pkt[3] << 8);
+  const typeByte = pkt[4];
+
+  const strings: string[] = [];
+  let current = "";
+  for (let i = 5; i < pkt.length; i++) {
+    if (pkt[i] === 0) {
+      strings.push(current);
+      current = "";
+    } else {
+      current += String.fromCharCode(pkt[i]);
+    }
+  }
+  // The final string is terminated by the end of the packet, not necessarily
+  // by a NUL byte — a name that exactly fills the last BLE fragment has no
+  // room left for a trailing NUL.
+  if (current.length > 0) strings.push(current);
+  if (strings.length < 2) return null;
+
+  const rawFullName = `${strings[0]}.${strings[1]}`;
+  const fullName = repairParamName(rawFullName);
+  const dot = fullName.indexOf(".");
+  const group = dot >= 0 ? fullName.slice(0, dot) : fullName;
+  const name = dot >= 0 ? fullName.slice(dot + 1) : "";
+
+  return {
+    id,
+    group,
+    name,
+    fullName,
+    type: decodeParamType(typeByte),
+    readOnly: (typeByte & 0x40) !== 0,
+  };
+}
+
+// ---------- Parameter write ----------
+export function encodeValue(value: number, type: ParamType): Uint8Array {
+  const sizes: Record<ParamType, number> = {
+    int8: 1,
+    uint8: 1,
+    int16: 2,
+    uint16: 2,
+    int32: 4,
+    uint32: 4,
+    float: 4,
+  };
+  const buf = new ArrayBuffer(sizes[type]);
+  const dv = new DataView(buf);
+  switch (type) {
+    case "int8":
+      dv.setInt8(0, value);
+      break;
+    case "uint8":
+      dv.setUint8(0, value);
+      break;
+    case "int16":
+      dv.setInt16(0, value, true);
+      break;
+    case "uint16":
+      dv.setUint16(0, value, true);
+      break;
+    case "int32":
+      dv.setInt32(0, value, true);
+      break;
+    case "uint32":
+      dv.setUint32(0, value, true);
+      break;
+    case "float":
+      dv.setFloat32(0, value, true);
+      break;
+  }
+  return new Uint8Array(buf);
+}
+
+export function paramWritePacket(
+  id: number,
+  value: number,
+  type: ParamType,
+): Uint8Array {
+  const val = encodeValue(value, type);
+  const out = new Uint8Array(3 + val.length);
+  out[0] = crtpHeader(PORT_PARAM, PARAM_CHAN_WRITE);
+  out[1] = id & 0xff;
+  out[2] = (id >> 8) & 0xff;
+  out.set(val, 3);
+  return out;
+}
+
+// ---------- Compatibility shim ----------
+// mission.tsx and tuning.tsx still call this. It keeps them compiling.
+// We rewrite both screens properly later.
+export const CrtpService = {
+  writeParameter(id: number, value: number, type: ParamType): string {
+    return bytesToBase64(
+      fragmentForBle(paramWritePacket(id, value, type), 0)[0],
+    );
+  },
+};

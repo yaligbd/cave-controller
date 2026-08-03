@@ -1,181 +1,285 @@
 import Header from '@/components/Header';
-import { styles } from '@/constants/theme';
-import CheckBox from 'expo-checkbox';
-import React, { useState } from 'react';
+import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
+import React, { useMemo, useState } from 'react';
 import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-// Import our hardware connection and CRTP services
-import { CRAZYFLIE_RX, CRAZYFLIE_SERVICE, useDroneConnection } from '@/contexts/DroneConnectionContext';
-import { CrtpService } from '@/services/CrtpService';
+import { useDroneConnection } from '@/contexts/DroneConnectionContext';
+import { useTheme } from '@/contexts/ThemeContext';
 
-// CRTP Parameter IDs (These must match the internal IDs assigned by the drone's firmware)
-const PARAM_MISSION_STATE = 1;  // uint8
-const PARAM_MISSION_TIMER = 2;  // uint16
-const PARAM_MISSION_RTH = 3;    // uint8
+const TIMER_MIN = 1;
+const TIMER_MAX = 45;
+const HEIGHT_MIN = 200;
+const HEIGHT_MAX = 1500;
+const SAMPLEDIST_MIN = 5;
+const SAMPLEDIST_MAX = 100;
+
+type StatusLevel = 'muted' | 'warn' | 'ready';
+
+interface Status {
+  level: StatusLevel;
+  message: string;
+  subMessage?: string;
+}
+
+function getStatus(
+  bleAvailable: boolean,
+  isConnected: boolean,
+  tocProgress: { loaded: number; total: number },
+  params: Map<string, unknown>
+): Status {
+  if (!bleAvailable) {
+    return { level: 'muted', message: 'Bluetooth unavailable on this device' };
+  }
+  if (!isConnected) {
+    return { level: 'muted', message: 'Not connected — tap the Bluetooth icon' };
+  }
+
+  const readingToc = tocProgress.total > 0 && tocProgress.loaded < tocProgress.total;
+  if (readingToc) {
+    return { level: 'warn', message: `Reading drone parameters… ${tocProgress.loaded}/${tocProgress.total}` };
+  }
+
+  if (!params.has('mission.state')) {
+    return {
+      level: 'warn',
+      message: 'Connected. CaveBat firmware not found on this drone.',
+      subMessage: `${params.size} parameters found`,
+    };
+  }
+
+  return { level: 'ready', message: 'Ready to fly' };
+}
 
 export default function MissionScreen() {
-  const { isConnected, connectedDevice } = useDroneConnection();
+  const { styles, palette } = useTheme();
+  const { isConnected, bleAvailable, params, tocProgress, setParam } = useDroneConnection();
 
-  // Flight Parameters
-  const [missionTimer, setMissionTimer] = useState(60);
-  const [missionMaxAltitude, setMissionMaxAltitude] = useState(500); // mm
-  const [avoidanceEnabled, setAvoidanceEnabled] = useState(true);
-  const [rthEnabled, setRthEnabled] = useState(true);  
+  const [timer, setTimer] = useState(10);
+  const [height, setHeight] = useState(500);
+  const [sampleDist, setSampleDist] = useState(10);
+  const [flying, setFlying] = useState(false);
 
-  // Helper function to send a single parameter packet
-  const sendParameter = async (id: number, value: number, type: 'uint8' | 'uint16' | 'float') => {
-    if (!connectedDevice) return;
-    const packet = CrtpService.writeParameter(id, value, type);
-    await connectedDevice.writeCharacteristicWithoutResponseForService(
-      CRAZYFLIE_SERVICE,
-      CRAZYFLIE_RX,
-      packet
-    );
+  const status = getStatus(bleAvailable, isConnected, tocProgress, params);
+
+  const STATUS_COLOR: Record<StatusLevel, string> = {
+    muted: palette.textMuted,
+    warn: palette.warn,
+    ready: palette.ready,
+  };
+  const STATUS_BG: Record<StatusLevel, string> = {
+    muted: palette.surface,
+    warn: palette.warnBg,
+    ready: palette.readyBg,
   };
 
-  const startMission = async () => {
-    if (!isConnected || !connectedDevice) {
-      Alert.alert("No Connection", "Please connect to the drone before starting the mission.");
+  const validateInputs = (): string | null => {
+    if (!Number.isFinite(timer) || timer < TIMER_MIN || timer > TIMER_MAX) {
+      return `Hover time must be between ${TIMER_MIN} and ${TIMER_MAX} seconds.`;
+    }
+    if (!Number.isFinite(height) || height < HEIGHT_MIN || height > HEIGHT_MAX) {
+      return `Altitude must be between ${HEIGHT_MIN} and ${HEIGHT_MAX} mm.`;
+    }
+    if (!Number.isFinite(sampleDist) || sampleDist < SAMPLEDIST_MIN || sampleDist > SAMPLEDIST_MAX) {
+      return `Measure distance must be between ${SAMPLEDIST_MIN} and ${SAMPLEDIST_MAX} cm.`;
+    }
+    return null;
+  };
+
+  const handleTakeOff = async () => {
+    const validationError = validateInputs();
+    if (validationError) {
+      Alert.alert('Invalid input', validationError);
       return;
     }
 
     try {
-      console.log("Syncing parameters to drone RAM...");
+      await setParam('mission.timer', timer);
 
-      // 1. Sync the Timer (in seconds)
-      await sendParameter(PARAM_MISSION_TIMER, missionTimer, 'uint16');
-      
-      // 2. Sync the RTH toggle (1 for true, 0 for false)
-      await sendParameter(PARAM_MISSION_RTH, rthEnabled ? 1 : 0, 'uint8');
+      if (params.has('mission.height')) {
+        await setParam('mission.height', height);
+      } else {
+        console.log('[mission] firmware has no mission.height parameter — skipping altitude');
+      }
 
-      // (Note: We would sync Max Altitude and Avoidance here if they were exposed in the C code!)
-      
-      // Wait a tiny bit for the drone to process the parameters
-      await new Promise(resolve => setTimeout(resolve, 100));
+      if (params.has('mission.sampledist')) {
+        await setParam('mission.sampledist', sampleDist);
+      } else {
+        console.log('[mission] firmware has no mission.sampledist parameter — skipping sample distance');
+      }
 
-      console.log("Parameters synced. Sending Takeoff Command!");
-
-      // 3. Flip the state machine to 1 (FLYING) to trigger the autonomous loop
-      await sendParameter(PARAM_MISSION_STATE, 1, 'uint8');
-
-      Alert.alert("Mission Started", "The drone is now executing its autonomous sequence.");
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await setParam('mission.state', 1);
+      setFlying(true);
     } catch (error) {
-      console.error("Failed to start mission:", error);
-      Alert.alert("Error", "Failed to communicate with the drone.");
+      Alert.alert('Take off failed', error instanceof Error ? error.message : String(error));
     }
   };
+
+  const handleAbort = async () => {
+    try {
+      await setParam('mission.state', 2);
+    } catch (error) {
+      Alert.alert('Abort failed', error instanceof Error ? error.message : String(error));
+    } finally {
+      setFlying(false);
+    }
+  };
+
+  const canTakeOff = status.level === 'ready' && !flying;
+
+  const localStyles = useMemo(() => createLocalStyles(palette), [palette]);
 
   return (
     <SafeAreaProvider style={styles.safeArea}>
       <Header />
-      
-      <View style={[styles.bodyContainer, { padding: 20 }]}>
-        <Text style={{ color: '#00e5ff', fontSize: 28, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' }}>
-          Pre-Flight Checklist
-        </Text>
 
-        <View style={localStyles.card}>
-          <Text style={localStyles.label}>Mission Timer (Seconds)</Text>
-          <TextInput 
-            onChangeText={(text) => setMissionTimer(Number(text))} 
-            keyboardType='numeric' 
-            value={missionTimer.toString()} 
-            style={localStyles.input} 
-          />
+      <View style={[styles.bodyContainer, { padding: spacing.lg }]}>
+        <Text style={styles.label}>Pre-Flight Checklist</Text>
 
-          <Text style={localStyles.label}>Max Altitude Ceiling (mm)</Text>
-          <TextInput 
-            onChangeText={(text) => setMissionMaxAltitude(Number(text))} 
-            keyboardType='numeric' 
-            value={missionMaxAltitude.toString()} 
-            style={localStyles.input} 
-          />
-
-          <View style={localStyles.checkboxRow}>
-            <CheckBox 
-              style={localStyles.checkbox} 
-              value={avoidanceEnabled} 
-              onValueChange={setAvoidanceEnabled} 
-              color={avoidanceEnabled ? '#00e5ff' : undefined} 
-            />
-            <Text style={localStyles.checkboxLabel}>Enable Obstacle Avoidance</Text>
-          </View>
-
-          <View style={localStyles.checkboxRow}>
-            <CheckBox 
-              style={localStyles.checkbox} 
-              value={rthEnabled} 
-              onValueChange={setRthEnabled} 
-              color={rthEnabled ? '#00e5ff' : undefined} 
-            />
-            <Text style={localStyles.checkboxLabel}>Enable Return-To-Home (RTH)</Text>
-          </View>
+        <View
+          style={[
+            localStyles.statusBlock,
+            { backgroundColor: STATUS_BG[status.level], borderLeftColor: STATUS_COLOR[status.level] },
+          ]}
+        >
+          <Text style={[localStyles.statusText, { color: STATUS_COLOR[status.level] }]}>
+            {'●'} {status.message.toUpperCase()}
+          </Text>
+          {status.subMessage && <Text style={localStyles.statusSubText}>{status.subMessage}</Text>}
         </View>
 
-        <TouchableOpacity 
-          style={[localStyles.startButton, { backgroundColor: isConnected ? '#4CAF50' : '#444' }]}
-          onPress={startMission}
-          disabled={!isConnected}
+        <View style={localStyles.card}>
+          <Text style={localStyles.fieldLabel}>Hover Time (seconds)</Text>
+          <TextInput
+            onChangeText={(text) => setTimer(Number(text))}
+            keyboardType="numeric"
+            value={timer.toString()}
+            style={localStyles.input}
+            placeholderTextColor={palette.textMuted}
+          />
+
+          <Text style={localStyles.fieldLabel}>Max Altitude (mm)</Text>
+          <TextInput
+            onChangeText={(text) => setHeight(Number(text))}
+            keyboardType="numeric"
+            value={height.toString()}
+            style={localStyles.input}
+            placeholderTextColor={palette.textMuted}
+          />
+
+          <Text style={localStyles.fieldLabel}>Measure Distance (cm)</Text>
+          <TextInput
+            onChangeText={(text) => setSampleDist(Number(text))}
+            keyboardType="numeric"
+            value={sampleDist.toString()}
+            style={[localStyles.input, { marginBottom: 0 }]}
+            placeholderTextColor={palette.textMuted}
+          />
+        </View>
+
+        <TouchableOpacity
+          style={[
+            localStyles.takeOffButton,
+            canTakeOff
+              ? { borderColor: palette.ready, backgroundColor: alpha(palette.ready, 0.12) }
+              : { borderColor: palette.borderStrong, backgroundColor: palette.surface },
+          ]}
+          onPress={handleTakeOff}
+          disabled={!canTakeOff}
         >
-          <Text style={localStyles.startButtonText}>
-            {isConnected ? 'Sync & Start Autonomous Mission' : 'Connect Drone to Start'}
+          <Text style={[localStyles.buttonText, { color: canTakeOff ? palette.ready : palette.textMuted }]}>
+            {flying ? 'Mission In Progress' : 'Take Off'}
           </Text>
         </TouchableOpacity>
 
+        <TouchableOpacity
+          style={[
+            localStyles.abortButton,
+            isConnected
+              ? { borderColor: palette.fault, backgroundColor: alpha(palette.fault, 0.12) }
+              : { borderColor: palette.borderStrong, backgroundColor: palette.surface },
+          ]}
+          onPress={handleAbort}
+          disabled={!isConnected}
+        >
+          <Text style={[localStyles.buttonText, { color: isConnected ? palette.fault : palette.textMuted }]}>
+            Abort
+          </Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaProvider>
   );
 }
 
-const localStyles = StyleSheet.create({
-  card: {
-    backgroundColor: '#222',
-    padding: 20,
-    borderRadius: 15,
-    marginBottom: 20,
-  },
-  label: {
-    color: '#ddd',
-    fontSize: 16,
-    marginBottom: 8,
-    fontWeight: '600',
-  },
-  input: {
-    backgroundColor: '#fff',
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    borderRadius: 8,
-    marginBottom: 20,
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  checkbox: {
-    marginRight: 10,
-    width: 24,
-    height: 24,
-  },
-  checkboxLabel: {
-    color: '#fff',
-    fontSize: 16,
-  },
-  startButton: {
-    paddingVertical: 18,
-    borderRadius: 12,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-  },
-  startButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  }
-});
+function createLocalStyles(palette: Palette) {
+  return StyleSheet.create({
+    statusBlock: {
+      borderLeftWidth: 3,
+      borderRadius: radius.sm,
+      padding: spacing.lg,
+      marginBottom: spacing.lg,
+    },
+    statusText: {
+      fontFamily: type.fontFamily,
+      fontSize: type.md,
+      fontWeight: 'bold',
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+    },
+    statusSubText: {
+      fontFamily: type.fontFamily,
+      fontSize: type.xs,
+      color: palette.textSecondary,
+      marginTop: spacing.xs,
+    },
+    card: {
+      backgroundColor: palette.surface,
+      borderWidth: 1,
+      borderColor: palette.border,
+      borderRadius: radius.sm,
+      padding: spacing.lg,
+      marginBottom: spacing.lg,
+    },
+    fieldLabel: {
+      fontFamily: type.fontFamily,
+      fontSize: type.micro,
+      letterSpacing: 1.5,
+      textTransform: 'uppercase',
+      color: palette.textMuted,
+      marginBottom: spacing.sm,
+    },
+    input: {
+      backgroundColor: palette.surfaceRaised,
+      borderWidth: 1,
+      borderColor: palette.border,
+      borderRadius: radius.sm,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+      marginBottom: spacing.lg,
+      fontFamily: type.fontFamily,
+      fontSize: type.readout,
+      color: palette.textPrimary,
+    },
+    takeOffButton: {
+      borderWidth: 1,
+      borderRadius: radius.sm,
+      paddingVertical: spacing.lg,
+      alignItems: 'center',
+      marginBottom: spacing.md,
+    },
+    abortButton: {
+      borderWidth: 1,
+      borderRadius: radius.sm,
+      paddingVertical: spacing.md,
+      alignItems: 'center',
+    },
+    buttonText: {
+      fontFamily: type.fontFamily,
+      fontSize: type.sm,
+      fontWeight: 'bold',
+      letterSpacing: 2,
+      textTransform: 'uppercase',
+    },
+  });
+}

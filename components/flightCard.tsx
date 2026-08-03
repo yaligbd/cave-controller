@@ -1,4 +1,5 @@
-import { styles } from '@/constants/theme';
+import { radius } from '@/constants/theme';
+import { useTheme } from '@/contexts/ThemeContext';
 import React from 'react';
 import { Alert, ImageBackground, Text, TouchableOpacity, View } from 'react-native';
 import { Flight } from '@/types/flightT';
@@ -6,25 +7,32 @@ import { Flight } from '@/types/flightT';
 //=========================================interfaces============================================
 interface FlightCardProps {
     flight: Flight;
+    onPress?: () => void;
 }
 
 //=========================================components============================================
-export default function FlightCard({flight}: FlightCardProps) {
+export default function FlightCard({flight, onPress}: FlightCardProps) {
+    const { styles } = useTheme();
+
     const handleCardPress = () => {
-        Alert.alert(
-          `Flight ${flight.name} has been selected` 
-        );
+        if (onPress) {
+          onPress();
+        } else {
+          Alert.alert(
+            `Flight ${flight.name} has been selected`
+          );
+        }
       };
       //=========================================render============================================
   return (
-    
-              <TouchableOpacity style={styles.cardWrapper} onPress={handleCardPress}>
-                
 
-                <ImageBackground 
-                  source={require('../assets/images/black-drone.jpg')} 
+              <TouchableOpacity style={styles.cardWrapper} onPress={handleCardPress}>
+
+
+                <ImageBackground
+                  source={require('../assets/images/black-drone.jpg')}
                   style={styles.cardImage}
-                  imageStyle={{ borderRadius: 12 }} // This actually rounds the corners of the image itself
+                  imageStyle={{ borderRadius: radius.sm }} // Rounds the corners of the image itself
                 >
                   {/* An extra view to make the text pop. This creates a semi-transparent dark overlay */}
                   <View style={styles.cardOverlay}>
@@ -34,11 +42,10 @@ export default function FlightCard({flight}: FlightCardProps) {
                     <Text style={styles.cardSubtitle}>Duration: {flight.duration} s</Text>
                     <Text style={styles.cardSubtitle}>Battery Usage: {flight.batteryUsage} %</Text>
                   </View>
-                  
+
                 </ImageBackground>
-                
+
               </TouchableOpacity>
 
   );
 }
-
