@@ -128,14 +128,18 @@ export class CrtpReassembler {
     if (this.bufferedLength > 0 && pid === this.bufferedPid) {
       // Continuation of an already-open buffer.
       console.log(
-        `[reasm cont] ctrl=0x${ctrl.toString(16).padStart(2, "0")} pid=${pid} bufBefore=${this.buf.length} contPayloadLen=${payload.length} contBytes=${reasmHex(payload)}`
+        `[reasm cont] ctrl=0x${ctrl.toString(16).padStart(2, "0")} pid=${pid} bufBefore=${this.buf.length} contPayloadLen=${payload.length} contBytes=${reasmHex(payload)}`,
       );
       this.buf = this.buf.concat(Array.from(payload));
       console.log(`[reasm cont] bufAfter=${reasmHex(this.buf)}`);
       if (this.buf.length >= this.bufferedLength) {
         const done = new Uint8Array(this.buf.slice(0, this.bufferedLength));
-        console.log(`[crtp reasm] completed pid=${pid} total=${this.bufferedLength}`);
-        console.log(`[reasm deliver] len=${done.length} bytes=${reasmHex(done)}`);
+        console.log(
+          `[crtp reasm] completed pid=${pid} total=${this.bufferedLength}`,
+        );
+        console.log(
+          `[reasm deliver] len=${done.length} bytes=${reasmHex(done)}`,
+        );
         this.buf = [];
         this.bufferedPid = -1;
         this.bufferedLength = 0;
@@ -159,9 +163,11 @@ export class CrtpReassembler {
     this.buf = Array.from(payload);
     this.bufferedPid = pid;
     this.bufferedLength = length;
-    console.log(`[crtp reasm] opened pid=${pid} expected=${length} got=${payload.length}`);
     console.log(
-      `[reasm open] ctrl=0x${ctrl.toString(16).padStart(2, "0")} field=${length} payloadLen=${payload.length} bytes=${reasmHex(payload)}`
+      `[crtp reasm] opened pid=${pid} expected=${length} got=${payload.length}`,
+    );
+    console.log(
+      `[reasm open] ctrl=0x${ctrl.toString(16).padStart(2, "0")} field=${length} payloadLen=${payload.length} bytes=${reasmHex(payload)}`,
     );
     return null;
   }
@@ -232,33 +238,55 @@ export function parseParamInfo(
 // lost byte was the NUL terminator, the next byte in the packet gets absorbed
 // into the name instead (e.g. "mission.height" -> "mission.heighte").
 const KNOWN_PARAM_NAMES = [
-  "deck.bcFlow2", "deck.bcMultiranger", "deck.bcZRanger", "deck.bcZRanger2",
-  "deck.bcLedRing", "deck.bcBuzzer", "deck.bcOA", "deck.bcLighthouse4",
-  "deck.bcUSD", "deck.bcDWM1000", "deck.bcAI",
-  "mission.state", "mission.timer", "mission.height", "mission.maxtime",
-  "mission.sampledist", "mission.vbatmin",
-  "pm.lowVoltage", "pm.criticalLowVoltage",
+  "deck.bcFlow2",
+  "deck.bcMultiranger",
+  "deck.bcZRanger",
+  "deck.bcZRanger2",
+  "deck.bcLedRing",
+  "deck.bcBuzzer",
+  "deck.bcOA",
+  "deck.bcLighthouse4",
+  "deck.bcUSD",
+  "deck.bcDWM1000",
+  "deck.bcAI",
+  "mission.state",
+  "mission.timer",
+  "mission.height",
+  "mission.maxtime",
+  "mission.sampledist",
+  "mission.vbatmin",
 ];
 
-export function repairParamName(raw: string): string {
-  if (KNOWN_PARAM_NAMES.includes(raw)) return raw;
+// True if `short` is `full` with exactly one character removed, anywhere.
+function isOneDeletion(short: string, full: string): boolean {
+  if (short.length !== full.length - 1) return false;
+  let i = 0;
+  while (i < short.length && short[i] === full[i]) i++;
+  return short.slice(i) === full.slice(i + 1);
+}
 
-  const trimmed = raw.slice(0, -1);
-  const candidates = KNOWN_PARAM_NAMES.filter((known) => {
-    // Plain truncation: raw is the known name with its tail cut off.
-    if (known.slice(0, raw.length) === raw) return true;
-    // Lost NUL terminator: raw is the known name plus one absorbed byte.
-    if (known.startsWith(trimmed) && (known.length === trimmed.length || known.length === trimmed.length + 1)) {
-      return true;
-    }
-    return false;
-  });
+// Shared by parseParamItem and parseLogItem — both suffer the same BLE
+// fragment-boundary truncation, just against different name tables.
+function repairName(raw: string, knownNames: string[]): string {
+  if (knownNames.includes(raw)) return raw;
+
+  const candidates = knownNames.filter(
+    (known) =>
+      // one byte lost at the fragment boundary, anywhere in the name
+      isOneDeletion(raw, known) ||
+      // NUL terminator lost, so a stray byte got absorbed onto the end
+      (raw.length === known.length + 1 && raw.startsWith(known)),
+  );
 
   if (candidates.length === 1) {
-    console.warn(`[CrtpService] repaired truncated param name "${raw}" -> "${candidates[0]}"`);
+    console.warn(`[crtp] repaired "${raw}" -> "${candidates[0]}"`);
     return candidates[0];
   }
   return raw;
+}
+
+export function repairParamName(raw: string): string {
+  return repairName(raw, KNOWN_PARAM_NAMES);
 }
 
 export function parseParamItem(pkt: Uint8Array): ParamEntry | null {
@@ -353,6 +381,257 @@ export function paramWritePacket(
   out[2] = (id >> 8) & 0xff;
   out.set(val, 3);
   return out;
+}
+
+// ---------- Log subsystem ----------
+export const LOG_CHAN_TOC = 0;
+export const LOG_CHAN_CTRL = 1;
+export const LOG_CHAN_DATA = 2;
+
+export const LOG_CMD_GET_ITEM = 2;
+export const LOG_CMD_GET_INFO = 3;
+
+export const LOG_CTRL_CREATE_BLOCK = 6; // v2
+export const LOG_CTRL_START_BLOCK = 3;
+export const LOG_CTRL_STOP_BLOCK = 4;
+export const LOG_CTRL_DELETE_BLOCK = 5;
+
+export type LogType =
+  | "uint8"
+  | "uint16"
+  | "uint32"
+  | "int8"
+  | "int16"
+  | "int32"
+  | "float"
+  | "fp16";
+
+export interface LogEntry {
+  id: number;
+  group: string;
+  name: string;
+  fullName: string;
+  type: LogType;
+}
+
+// Log type byte encoding from the firmware's log.h — a direct value, not a
+// bitfield like the param type byte.
+const LOG_TYPE_TABLE: Record<number, LogType> = {
+  1: "uint8",
+  2: "uint16",
+  3: "uint32",
+  4: "int8",
+  5: "int16",
+  6: "int32",
+  7: "float",
+  8: "fp16",
+};
+
+const LOG_TYPE_TO_BYTE: Record<LogType, number> = {
+  uint8: 1,
+  uint16: 2,
+  uint32: 3,
+  int8: 4,
+  int16: 5,
+  int32: 6,
+  float: 7,
+  fp16: 8,
+};
+
+const LOG_TYPE_SIZE: Record<LogType, number> = {
+  uint8: 1,
+  int8: 1,
+  uint16: 2,
+  int16: 2,
+  fp16: 2,
+  uint32: 4,
+  int32: 4,
+  float: 4,
+};
+
+export function decodeLogType(typeByte: number): LogType {
+  return LOG_TYPE_TABLE[typeByte & 0x0f] ?? "uint8";
+}
+
+export function logGetInfoPacket(): Uint8Array {
+  return new Uint8Array([crtpHeader(PORT_LOG, LOG_CHAN_TOC), LOG_CMD_GET_INFO]);
+}
+
+export function logGetItemPacket(id: number): Uint8Array {
+  return new Uint8Array([
+    crtpHeader(PORT_LOG, LOG_CHAN_TOC),
+    LOG_CMD_GET_ITEM,
+    id & 0xff,
+    (id >> 8) & 0xff,
+  ]);
+}
+
+export function parseLogInfo(
+  pkt: Uint8Array,
+): { count: number; crc: number } | null {
+  if (pkt.length < 8) return null;
+  if (crtpPort(pkt[0]) !== PORT_LOG || pkt[1] !== LOG_CMD_GET_INFO) return null;
+  const count = pkt[2] | (pkt[3] << 8);
+  const crc = (pkt[4] | (pkt[5] << 8) | (pkt[6] << 16) | (pkt[7] << 24)) >>> 0;
+  return { count, crc };
+}
+
+// Same truncation issue as parameter names — names longer than ~13 characters
+// lose a byte at the fragment boundary.
+const KNOWN_LOG_NAMES = [
+  "pm.vbat",
+  "pm.vbatMV",
+  "pm.batteryLevel",
+  "pm.chargeCurrent",
+  "pm.state",
+  "range.front",
+  "range.back",
+  "range.left",
+  "range.right",
+  "range.up",
+  "range.zrange",
+  "stateEstimate.x",
+  "stateEstimate.y",
+  "stateEstimate.z",
+  "stateEstimate.yaw",
+  "stabilizer.roll",
+  "stabilizer.pitch",
+  "stabilizer.yaw",
+];
+
+export function repairLogName(raw: string): string {
+  return repairName(raw, KNOWN_LOG_NAMES);
+}
+
+export function parseLogItem(pkt: Uint8Array | null | undefined): LogEntry | null {
+  // [header][cmd][id_lo][id_hi][type][group\0][name\0]
+  if (!pkt || pkt.length < 6) return null;
+  if (crtpPort(pkt[0]) !== PORT_LOG || pkt[1] !== LOG_CMD_GET_ITEM) return null;
+
+  const id = pkt[2] | (pkt[3] << 8);
+  const typeByte = pkt[4];
+
+  const strings: string[] = [];
+  let current = "";
+  for (let i = 5; i < pkt.length; i++) {
+    if (pkt[i] === 0) {
+      strings.push(current);
+      current = "";
+    } else {
+      current += String.fromCharCode(pkt[i]);
+    }
+  }
+  if (current.length > 0) strings.push(current);
+  if (strings.length < 2) return null;
+
+  const rawFullName = `${strings[0]}.${strings[1]}`;
+  const fullName = repairLogName(rawFullName);
+  const dot = fullName.indexOf(".");
+  const group = dot >= 0 ? fullName.slice(0, dot) : fullName;
+  const name = dot >= 0 ? fullName.slice(dot + 1) : "";
+
+  return {
+    id,
+    group,
+    name,
+    fullName,
+    type: decodeLogType(typeByte),
+  };
+}
+
+export function logCreateBlockPacket(blockId: number, vars: LogEntry[]): Uint8Array {
+  const out = new Uint8Array(3 + vars.length * 3);
+  out[0] = crtpHeader(PORT_LOG, LOG_CHAN_CTRL);
+  out[1] = LOG_CTRL_CREATE_BLOCK;
+  out[2] = blockId & 0xff;
+  let offset = 3;
+  for (const v of vars) {
+    out[offset++] = LOG_TYPE_TO_BYTE[v.type];
+    out[offset++] = v.id & 0xff;
+    out[offset++] = (v.id >> 8) & 0xff;
+  }
+  return out;
+}
+
+export function logStartBlockPacket(blockId: number, periodMs: number): Uint8Array {
+  const period = Math.max(1, Math.min(255, Math.round(periodMs / 10)));
+  return new Uint8Array([
+    crtpHeader(PORT_LOG, LOG_CHAN_CTRL),
+    LOG_CTRL_START_BLOCK,
+    blockId & 0xff,
+    period,
+  ]);
+}
+
+export function logStopBlockPacket(blockId: number): Uint8Array {
+  return new Uint8Array([
+    crtpHeader(PORT_LOG, LOG_CHAN_CTRL),
+    LOG_CTRL_STOP_BLOCK,
+    blockId & 0xff,
+  ]);
+}
+
+export function logDeleteBlockPacket(blockId: number): Uint8Array {
+  return new Uint8Array([
+    crtpHeader(PORT_LOG, LOG_CHAN_CTRL),
+    LOG_CTRL_DELETE_BLOCK,
+    blockId & 0xff,
+  ]);
+}
+
+// IEEE-754 half-precision -> JS number. Log variables can be stored as fp16
+// on the firmware side to save bandwidth.
+function decodeFp16(bits: number): number {
+  const sign = bits & 0x8000 ? -1 : 1;
+  const exponent = (bits >> 10) & 0x1f;
+  const fraction = bits & 0x3ff;
+  if (exponent === 0) return sign * fraction * Math.pow(2, -24);
+  if (exponent === 0x1f) return fraction ? NaN : sign * Infinity;
+  return sign * (1 + fraction / 1024) * Math.pow(2, exponent - 15);
+}
+
+function readLogValue(dv: DataView, offset: number, type: LogType): number {
+  switch (type) {
+    case "uint8":
+      return dv.getUint8(offset);
+    case "int8":
+      return dv.getInt8(offset);
+    case "uint16":
+      return dv.getUint16(offset, true);
+    case "int16":
+      return dv.getInt16(offset, true);
+    case "uint32":
+      return dv.getUint32(offset, true);
+    case "int32":
+      return dv.getInt32(offset, true);
+    case "float":
+      return dv.getFloat32(offset, true);
+    case "fp16":
+      return decodeFp16(dv.getUint16(offset, true));
+  }
+}
+
+export function decodeLogData(
+  pkt: Uint8Array,
+  entries: LogEntry[],
+): { blockId: number; timestamp: number; values: number[] } | null {
+  // [header][blockId][ts0][ts1][ts2][packed values...]
+  if (pkt.length < 5) return null;
+
+  const blockId = pkt[1];
+  const timestamp = pkt[2] | (pkt[3] << 8) | (pkt[4] << 16);
+
+  const dv = new DataView(pkt.buffer, pkt.byteOffset + 5, pkt.length - 5);
+  const values: number[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const size = LOG_TYPE_SIZE[entry.type];
+    if (offset + size > dv.byteLength) break;
+    values.push(readLogValue(dv, offset, entry.type));
+    offset += size;
+  }
+
+  return { blockId, timestamp, values };
 }
 
 // ---------- Compatibility shim ----------

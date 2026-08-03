@@ -8,7 +8,19 @@ import {
   crtpChannel,
   crtpPort,
   CrtpReassembler,
+  decodeLogData,
   fragmentForBle,
+  LOG_CHAN_DATA,
+  LOG_CHAN_TOC,
+  LOG_CMD_GET_INFO,
+  LOG_CMD_GET_ITEM,
+  LogEntry,
+  logCreateBlockPacket,
+  logDeleteBlockPacket,
+  logGetInfoPacket,
+  logGetItemPacket,
+  logStartBlockPacket,
+  logStopBlockPacket,
   PARAM_CHAN_TOC,
   PARAM_CMD_GET_INFO,
   PARAM_CMD_GET_ITEM,
@@ -17,9 +29,12 @@ import {
   paramGetItemPacket,
   ParamType,
   paramWritePacket,
+  parseLogInfo,
+  parseLogItem,
   parseParamInfo,
   parseParamItem,
   PORT_CONSOLE,
+  PORT_LOG,
   PORT_PARAM,
 } from '@/services/CrtpService';
 
@@ -106,6 +121,11 @@ interface DroneContextType {
   setParam: (fullName: string, value: number, typeOverride?: ParamType) => Promise<void>;
   findParam: (name: string) => ParamEntry | undefined;
   runCrtpProbe: () => Promise<void>;
+  logVars: Map<string, LogEntry>;
+  logTocProgress: TocProgress;
+  logValues: Map<string, number>;
+  startLogBlock: (blockId: number, names: string[], periodMs: number) => void;
+  stopLogBlock: (blockId: number) => void;
 }
 
 const DroneContext = createContext<DroneContextType | null>(null);
@@ -116,6 +136,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   const [tocProgress, setTocProgress] = useState<TocProgress>({ loaded: 0, total: 0 });
   const [bleStatus, setBleStatus] = useState<BleStatus>('idle');
   const [bleError, setBleError] = useState<string | null>(null);
+  const [logVars, setLogVars] = useState<Map<string, LogEntry>>(new Map());
+  const [logTocProgress, setLogTocProgress] = useState<TocProgress>({ loaded: 0, total: 0 });
+  const [logValues, setLogValues] = useState<Map<string, number>>(new Map());
 
   // Every stage of the connect flow goes through here so the UI always has
   // something to show — "no visible response" is exactly the bug this exists
@@ -151,6 +174,10 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // anything) actually arrived.
   const lastPacketSeenRef = useRef<Uint8Array | null>(null);
 
+  // The entry list a running log block was created with, keyed by blockId,
+  // so incoming data packets can be decoded back into named values.
+  const logBlocksRef = useRef<Map<number, LogEntry[]>>(new Map());
+
   const requestAndroidPermissions = async (): Promise<{ ok: boolean; deniedPermission?: string }> => {
     if (Platform.OS === 'android') {
       const granted = await PermissionsAndroid.requestMultiple([
@@ -183,10 +210,33 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
 
   const PORT_LINKCTRL = 15;
 
+  // Log data streams continuously once a block is running — decode and store
+  // it, but never log it per-packet, that would flood the console.
+  const handleLogData = (packet: Uint8Array) => {
+    const blockId = packet[1];
+    const entries = logBlocksRef.current.get(blockId);
+    if (!entries) return;
+    const decoded = decodeLogData(packet, entries);
+    if (!decoded) return;
+    setLogValues((prev) => {
+      const next = new Map(prev);
+      entries.forEach((entry, i) => {
+        if (i < decoded.values.length) next.set(entry.fullName, decoded.values[i]);
+      });
+      return next;
+    });
+  };
+
   const handlePacket = (packet: Uint8Array) => {
     lastPacketSeenRef.current = packet;
-    if (CRTP_DEBUG) console.log(`[crtp rx packet] ${toHex(packet)}`);
     if (packet.length === 0) return;
+
+    if (crtpPort(packet[0]) === PORT_LOG && crtpChannel(packet[0]) === LOG_CHAN_DATA) {
+      handleLogData(packet);
+      return;
+    }
+
+    if (CRTP_DEBUG) console.log(`[crtp rx packet] ${toHex(packet)}`);
     if (CRTP_DEBUG && crtpPort(packet[0]) === PORT_LINKCTRL) {
       let ascii = '';
       for (let i = 1; i < packet.length; i++) {
@@ -383,6 +433,82 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     sendPacket(paramWritePacket(entry.id, value, typeOverride ?? entry.type));
   };
 
+  const fetchLogToc = async () => {
+    setLogTocProgress({ loaded: 0, total: 0 });
+
+    const infoPacket = await request(
+      logGetInfoPacket(),
+      (pkt) => crtpPort(pkt[0]) === PORT_LOG && crtpChannel(pkt[0]) === LOG_CHAN_TOC && pkt[1] === LOG_CMD_GET_INFO,
+      5000
+    );
+    const info = parseLogInfo(infoPacket);
+    if (!info) throw new Error('Failed to parse log TOC info');
+
+    const { count } = info;
+    setLogTocProgress({ loaded: 0, total: count });
+
+    const entries = new Map<string, LogEntry>();
+    for (let id = 0; id < count; id++) {
+      let itemPacket: Uint8Array | undefined;
+      try {
+        itemPacket = await request(
+          logGetItemPacket(id),
+          (pkt) => crtpPort(pkt[0]) === PORT_LOG && crtpChannel(pkt[0]) === LOG_CHAN_TOC && pkt[1] === LOG_CMD_GET_ITEM,
+          3000
+        );
+      } catch {
+        console.warn(`[drone] Timed out fetching log TOC entry ${id}, skipping`);
+      }
+      // Only parse a packet that actually arrived — a timed-out request must
+      // never reach the parser.
+      if (itemPacket) {
+        const entry = parseLogItem(itemPacket);
+        if (entry) entries.set(entry.fullName, entry);
+      }
+      setLogTocProgress({ loaded: id + 1, total: count });
+    }
+
+    setLogVars(entries);
+    console.log('[drone] log TOC fetched:', entries.size, 'variables');
+
+    console.log('[drone] --- pm/range log vars ---');
+    for (const [name, e] of entries) {
+      if (name.startsWith('pm.') || name.startsWith('range.')) {
+        console.log(`[drone] ${name} (id ${e.id}, ${e.type})`);
+      }
+    }
+  };
+
+  const startLogBlock = (blockId: number, names: string[], periodMs: number) => {
+    const entries: LogEntry[] = [];
+    for (const name of names) {
+      const entry = logVars.get(name);
+      if (!entry) {
+        console.warn(`[drone] Unknown log variable "${name}" — skipping`);
+        continue;
+      }
+      entries.push(entry);
+    }
+
+    if (entries.length === 0) {
+      console.error(`[drone] No known variables for block ${blockId} — not starting`);
+      return;
+    }
+
+    logBlocksRef.current.set(blockId, entries);
+    console.log(`[drone] creating log block ${blockId} with ${entries.length} variables`);
+    sendPacket(logCreateBlockPacket(blockId, entries));
+    sendPacket(logStartBlockPacket(blockId, periodMs));
+    console.log(`[drone] started log block ${blockId} at ${periodMs}ms`);
+  };
+
+  const stopLogBlock = (blockId: number) => {
+    console.log(`[drone] stopping log block ${blockId}`);
+    sendPacket(logStopBlockPacket(blockId));
+    sendPacket(logDeleteBlockPacket(blockId));
+    logBlocksRef.current.delete(blockId);
+  };
+
   // Diagnostic probe: fires a fixed sequence of raw CRTP packets at ports/
   // channels/protocol-versions known to Bitcraze firmware, to determine
   // whether the drone answers anything at all over this transport. Never
@@ -435,6 +561,10 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     setIsConnected(false);
     setParams(new Map());
     setTocProgress({ loaded: 0, total: 0 });
+    setLogVars(new Map());
+    setLogTocProgress({ loaded: 0, total: 0 });
+    setLogValues(new Map());
+    logBlocksRef.current = new Map();
   };
 
   const connectToDrone = async (device: Device) => {
@@ -509,9 +639,11 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
 
       setStatus('fetching-toc');
       fetchParamToc()
+        .then(() => fetchLogToc())
+        .then(() => startLogBlock(0, ['pm.vbat'], 1000))
         .then(() => setStatus('connected'))
         .catch((error) => {
-          console.error('[drone] Failed to fetch parameter TOC:', error);
+          console.error('[drone] Failed to fetch parameter/log TOC:', error);
           setStatus('error', `Failed to read parameter list: ${error instanceof Error ? error.message : String(error)}`);
         });
     } catch (error) {
@@ -528,6 +660,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     }
 
     console.log(`Disconnecting from ${device.name}...`);
+    // Best-effort — the queue is about to be cleared by cleanupConnection, so
+    // this may not actually reach the drone, but it's cheap to try.
+    stopLogBlock(0);
     // Update the UI immediately so the user isn't left hanging.
     cleanupConnection();
     setStatus('idle');
@@ -616,6 +751,11 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
         setParam,
         findParam,
         runCrtpProbe,
+        logVars,
+        logTocProgress,
+        logValues,
+        startLogBlock,
+        stopLogBlock,
       }}
     >
       {children}

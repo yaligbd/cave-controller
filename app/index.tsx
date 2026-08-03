@@ -2,6 +2,8 @@ import Header from '@/components/Header';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { BleStatus, useDroneConnection } from '@/contexts/DroneConnectionContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { Ionicons } from '@expo/vector-icons';
+import { Href, useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -10,12 +12,40 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 // whose presence proves that piece is compiled into the connected firmware.
 // A tick here means the deck/app is compiled in — NOT that it is physically
 // attached. Confirming physical attachment needs a live value read, which
-// requires the CRTP log subsystem (not implemented yet).
-const CHECKLIST_ITEMS: { label: string; paramName: string }[] = [
+// requires the CRTP log subsystem.
+// `route` makes a row tappable (only when its check is green) to drill into a
+// dedicated screen — currently only Multi-ranger has one.
+const CHECKLIST_ITEMS: { label: string; paramName: string; route?: string }[] = [
   { label: 'Flow deck v2', paramName: 'deck.bcFlow2' },
-  { label: 'Multi-ranger', paramName: 'deck.bcMultiranger' },
+  { label: 'Multi-ranger', paramName: 'deck.bcMultiranger', route: '/sensors' },
   { label: 'CaveBat firmware', paramName: 'mission.state' },
 ];
+
+// LiPo open-circuit voltage -> approximate remaining charge. Piecewise linear
+// between these reference points; not a real discharge curve, just enough to
+// give a rough sense of "fine / getting low / land now".
+const LIPO_CURVE: [voltage: number, percent: number][] = [
+  [4.2, 100],
+  [4.0, 75],
+  [3.85, 50],
+  [3.7, 25],
+  [3.3, 0],
+];
+
+function lipoPercent(voltage: number): number {
+  if (voltage >= LIPO_CURVE[0][0]) return 100;
+  const last = LIPO_CURVE[LIPO_CURVE.length - 1];
+  if (voltage <= last[0]) return 0;
+  for (let i = 0; i < LIPO_CURVE.length - 1; i++) {
+    const [vHigh, pHigh] = LIPO_CURVE[i];
+    const [vLow, pLow] = LIPO_CURVE[i + 1];
+    if (voltage <= vHigh && voltage >= vLow) {
+      const t = (voltage - vLow) / (vHigh - vLow);
+      return pLow + t * (pHigh - pLow);
+    }
+  }
+  return 0;
+}
 
 type MarkState = 'disconnected' | 'checking' | 'present' | 'absent';
 
@@ -99,6 +129,7 @@ function getConnStatus(
 
 export default function ConnectScreen() {
   const { styles, palette } = useTheme();
+  const router = useRouter();
   const {
     isConnected,
     connectedDevice,
@@ -111,6 +142,7 @@ export default function ConnectScreen() {
     disconnectFromDrone,
     findParam,
     runCrtpProbe,
+    logValues,
   } = useDroneConnection();
 
   const fetching = tocProgress.total > 0 && tocProgress.loaded < tocProgress.total;
@@ -205,14 +237,22 @@ export default function ConnectScreen() {
           <Text style={localStyles.microLabel}>Hardware Checklist</Text>
           {CHECKLIST_ITEMS.map((item) => {
             const state = getMarkState(isConnected, tocDone, findParam(item.paramName) !== undefined);
+            const tappable = !!item.route && state === 'present';
             return (
-              <View key={item.paramName} style={localStyles.checklistRow}>
+              <TouchableOpacity
+                key={item.paramName}
+                style={localStyles.checklistRow}
+                disabled={!tappable}
+                activeOpacity={tappable ? 0.6 : 1}
+                onPress={tappable ? () => router.push(item.route as Href) : undefined}
+              >
                 <Text style={localStyles.rowLabel}>{item.label}</Text>
                 <View style={localStyles.markGroup}>
                   {state === 'checking' && <Text style={localStyles.checkingLabel}>checking</Text>}
                   <Text style={[localStyles.mark, { color: MARK_COLOR[state] }]}>{MARK_SYMBOL[state]}</Text>
+                  {tappable && <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />}
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })}
           <Text style={localStyles.caption}>
@@ -220,11 +260,31 @@ export default function ConnectScreen() {
             physically attached.
           </Text>
 
-          <View style={localStyles.checklistRow}>
-            <Text style={localStyles.rowLabel}>Battery</Text>
-            <Text style={[localStyles.mark, { color: palette.textMuted }]}>—</Text>
-          </View>
-          <Text style={localStyles.caption}>Requires CRTP log subsystem (not implemented)</Text>
+          {(() => {
+            const vbat = logValues.get('pm.vbat');
+            const percent = vbat !== undefined ? lipoPercent(vbat) : null;
+            const batteryColor =
+              percent === null
+                ? palette.textMuted
+                : percent > 50
+                  ? palette.ready
+                  : percent >= 20
+                    ? palette.warn
+                    : palette.fault;
+            return (
+              <>
+                <View style={localStyles.checklistRow}>
+                  <Text style={localStyles.rowLabel}>Battery</Text>
+                  <Text style={[localStyles.mark, { color: batteryColor }]}>
+                    {vbat !== undefined ? `${vbat.toFixed(2)}V (${Math.round(percent as number)}%)` : '—'}
+                  </Text>
+                </View>
+                <Text style={localStyles.caption}>
+                  {vbat !== undefined ? 'Live reading from pm.vbat' : 'waiting for data'}
+                </Text>
+              </>
+            );
+          })()}
         </View>
       </View>
     </SafeAreaProvider>
