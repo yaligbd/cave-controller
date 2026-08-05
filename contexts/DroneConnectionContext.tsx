@@ -21,18 +21,21 @@ import {
   logGetItemPacket,
   logStartBlockPacket,
   logStopBlockPacket,
+  PARAM_CHAN_READ,
   PARAM_CHAN_TOC,
   PARAM_CMD_GET_INFO,
   PARAM_CMD_GET_ITEM,
   ParamEntry,
   paramGetInfoPacket,
   paramGetItemPacket,
+  paramReadPacket,
   ParamType,
   paramWritePacket,
   parseLogInfo,
   parseLogItem,
   parseParamInfo,
   parseParamItem,
+  parseParamValue,
   PORT_CONSOLE,
   PORT_LOG,
   PORT_PARAM,
@@ -65,6 +68,48 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 1000;
 // null byte just to keep the bridge flushing its downlink buffer.
 const NULL_PACKET = new Uint8Array([0xff]);
 const POLL_DELAY_MS = 10;
+// A BLE write that never resolves (peripheral never sends the GATT response)
+// would otherwise wedge the poll loop forever — the only thing that
+// reschedules the next send is this write's own .finally(). Racing it against
+// a timeout guarantees the loop always gets control back.
+const WRITE_TIMEOUT_MS = 2000;
+const POLL_HEARTBEAT_MS = 5000;
+
+// Log streaming cannot work over BLE — logRunBlock() in the firmware calls
+// crtpIsConnected(), which resolves to radiolinkIsConnected(), a radio-only
+// check that is always false over Bluetooth. It silently deletes every log
+// block instead of ever transmitting. Sensor data is exposed as read-only
+// parameters in a "tele" group instead, polled here one at a time.
+const TELE_PARAM_NAMES = [
+  'tele.vbat',
+  'tele.front',
+  'tele.back',
+  'tele.left',
+  'tele.right',
+  'tele.up',
+  'tele.down',
+  'tele.x',
+  'tele.y',
+  'tele.z',
+];
+const TELE_POLL_INTERVAL_MS = 500;
+const TELE_READ_TIMEOUT_MS = 1000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
 
 let _bleManager: BleManager | null = null;
 let _bleManagerFailed = false;
@@ -126,6 +171,8 @@ interface DroneContextType {
   logValues: Map<string, number>;
   startLogBlock: (blockId: number, names: string[], periodMs: number) => void;
   stopLogBlock: (blockId: number) => void;
+  hasLogVar: (name: string) => boolean;
+  teleValues: Map<string, number>;
 }
 
 const DroneContext = createContext<DroneContextType | null>(null);
@@ -139,6 +186,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   const [logVars, setLogVars] = useState<Map<string, LogEntry>>(new Map());
   const [logTocProgress, setLogTocProgress] = useState<TocProgress>({ loaded: 0, total: 0 });
   const [logValues, setLogValues] = useState<Map<string, number>>(new Map());
+  const [teleValues, setTeleValues] = useState<Map<string, number>>(new Map());
 
   // Every stage of the connect flow goes through here so the UI always has
   // something to show — "no visible response" is exactly the bug this exists
@@ -148,6 +196,15 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     setBleStatus(status);
     setBleError(error);
   };
+
+  // Mirrors of the params/logVars state, read by logic that runs inside async
+  // chains (findParam, setParam, startLogBlock). setParams/setLogVars land on
+  // the next render, which is too late for a caller that calls e.g.
+  // fetchLogToc().then(() => startLogBlock(...)) — the .then() callback still
+  // closes over the state as it was when the effect/handler first ran. Refs
+  // are updated synchronously, so they're always current.
+  const paramsRef = useRef<Map<string, ParamEntry>>(new Map());
+  const logVarsRef = useRef<Map<string, LogEntry>>(new Map());
 
   // Read inside async BLE callbacks — useState values would go stale in those closures.
   const deviceRef = useRef<Device | null>(null);
@@ -165,6 +222,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   const packetQueueRef = useRef<Uint8Array[]>([]);
   const pollingActiveRef = useRef(false);
   const sendingRef = useRef(false);
+  // Diagnostics only — proves the poll loop is still alive; see POLL_HEARTBEAT_MS.
+  const pollSentCountRef = useRef(0);
+  const pollHeartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Timestamp of the most recent port-0 (console) packet, used to detect when
   // the drone's post-connect boot log dump has finished. 0 means "none seen".
@@ -177,6 +237,18 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // The entry list a running log block was created with, keyed by blockId,
   // so incoming data packets can be decoded back into named values.
   const logBlocksRef = useRef<Map<number, LogEntry[]>>(new Map());
+  // Temporary diagnostic — logs at most once per block if a data packet ever
+  // decodes fewer values than the block has variables (e.g. a short/truncated
+  // notification), instead of flooding on every packet.
+  const warnedShortLogBlocksRef = useRef<Set<number>>(new Set());
+
+  // Telemetry-by-polling — see TELE_PARAM_NAMES comment above.
+  const teleValuesRef = useRef<Map<string, number>>(new Map());
+  const teleActiveRef = useRef(false);
+  const teleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Consecutive-timeout count per name, so a persistently-missing variable
+  // logs once in a while instead of never or every single cycle.
+  const teleTimeoutCountRef = useRef<Map<string, number>>(new Map());
 
   const requestAndroidPermissions = async (): Promise<{ ok: boolean; deniedPermission?: string }> => {
     if (Platform.OS === 'android') {
@@ -211,13 +283,31 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   const PORT_LINKCTRL = 15;
 
   // Log data streams continuously once a block is running — decode and store
-  // it, but never log it per-packet, that would flood the console.
+  // it. The per-packet [log data] log below is a TEMPORARY diagnostic added
+  // to find why no data was arriving; remove it (or the CRTP_DEBUG-style
+  // gating) once confirmed working, it will flood the console otherwise.
   const handleLogData = (packet: Uint8Array) => {
     const blockId = packet[1];
     const entries = logBlocksRef.current.get(blockId);
-    if (!entries) return;
+    if (!entries) {
+      const known = Array.from(logBlocksRef.current.keys()).join(', ') || 'none';
+      console.log(`[log data] blockId=${blockId} has no registered entries — dropping (known blocks: ${known})`);
+      return;
+    }
     const decoded = decodeLogData(packet, entries);
-    if (!decoded) return;
+    if (!decoded) {
+      console.log(`[log data] blockId=${blockId} decodeLogData returned null, bytes=${toHex(packet)}`);
+      return;
+    }
+
+    if (decoded.values.length < entries.length && !warnedShortLogBlocksRef.current.has(blockId)) {
+      warnedShortLogBlocksRef.current.add(blockId);
+      const missing = entries.slice(decoded.values.length).map((e) => e.fullName).join(', ');
+      console.warn(
+        `[drone] log block ${blockId} data packet only decoded ${decoded.values.length}/${entries.length} values — missing: ${missing}`
+      );
+    }
+
     setLogValues((prev) => {
       const next = new Map(prev);
       entries.forEach((entry, i) => {
@@ -231,9 +321,15 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     lastPacketSeenRef.current = packet;
     if (packet.length === 0) return;
 
-    if (crtpPort(packet[0]) === PORT_LOG && crtpChannel(packet[0]) === LOG_CHAN_DATA) {
-      handleLogData(packet);
-      return;
+    if (crtpPort(packet[0]) === PORT_LOG) {
+      if (crtpChannel(packet[0]) === LOG_CHAN_DATA) {
+        console.log(`[log data] blockId=${packet[1]} bytes=${toHex(packet)}`);
+        handleLogData(packet);
+        return;
+      }
+      console.log(
+        `[log rx] port=5 packet NOT routed to log data handler — channel=${crtpChannel(packet[0])} (data channel is ${LOG_CHAN_DATA}), bytes=${toHex(packet)}`
+      );
     }
 
     if (CRTP_DEBUG) console.log(`[crtp rx packet] ${toHex(packet)}`);
@@ -297,8 +393,12 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
 
     const queued = packetQueueRef.current.shift();
     const packet = queued ?? NULL_PACKET;
+    pollSentCountRef.current += 1;
 
-    writeCrtpBytes(packet, queued === undefined)
+    // Timeout-wrapped: a write that never settles must not be able to wedge
+    // sendingRef at true forever — that would silently stop the whole loop,
+    // since nothing else ever reschedules the next send.
+    withTimeout(writeCrtpBytes(packet, queued === undefined), WRITE_TIMEOUT_MS, 'CRTP write')
       .catch((error) => {
         console.error('[drone] CRTP write failed:', error);
       })
@@ -313,12 +413,23 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   const startPolling = () => {
     if (pollingActiveRef.current) return;
     pollingActiveRef.current = true;
+    pollSentCountRef.current = 0;
     sendNext();
+
+    pollHeartbeatIntervalRef.current = setInterval(() => {
+      console.log(
+        `[crtp poll] alive, sent=${pollSentCountRef.current} packets, queue=${packetQueueRef.current.length}`
+      );
+    }, POLL_HEARTBEAT_MS);
   };
 
   const stopPolling = () => {
     pollingActiveRef.current = false;
     packetQueueRef.current = [];
+    if (pollHeartbeatIntervalRef.current) {
+      clearInterval(pollHeartbeatIntervalRef.current);
+      pollHeartbeatIntervalRef.current = null;
+    }
   };
 
   const request = (
@@ -403,6 +514,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       setTocProgress({ loaded: id + 1, total: count });
     }
 
+    paramsRef.current = entries;
     setParams(entries);
     for (const entry of entries.values()) {
       if (entry.fullName.startsWith('mission.')) {
@@ -421,8 +533,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // Truncated-name repair now happens upstream in parseParamItem (via
   // repairParamName), so params is keyed by the repaired name and a plain
   // lookup is sufficient. Kept as findParam so callers don't need to change.
+  // Reads paramsRef, not the params state — see the comment on paramsRef.
   const findParam = (name: string): ParamEntry | undefined => {
-    return params.get(name);
+    return paramsRef.current.get(name);
   };
 
   const setParam = async (fullName: string, value: number, typeOverride?: ParamType) => {
@@ -433,6 +546,83 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     sendPacket(paramWritePacket(entry.id, value, typeOverride ?? entry.type));
   };
 
+  // Resolves to the value, or null on timeout/parse failure — never throws,
+  // so a single missing/slow variable can't abort the whole polling cycle.
+  const readTeleParam = async (entry: ParamEntry): Promise<number | null> => {
+    try {
+      const pkt = await request(
+        paramReadPacket(entry.id),
+        (p) =>
+          crtpPort(p[0]) === PORT_PARAM &&
+          crtpChannel(p[0]) === PARAM_CHAN_READ &&
+          (p[1] | (p[2] << 8)) === entry.id,
+        TELE_READ_TIMEOUT_MS
+      );
+      const parsed = parseParamValue(pkt, entry.type);
+      return parsed ? parsed.value : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const runTelemetryCycle = async () => {
+    if (!teleActiveRef.current) return;
+
+    const next = new Map(teleValuesRef.current);
+    let changed = false;
+
+    for (const name of TELE_PARAM_NAMES) {
+      if (!teleActiveRef.current) return;
+
+      const entry = paramsRef.current.get(name);
+      if (!entry) continue; // not present on this firmware build — skip
+
+      const value = await readTeleParam(entry);
+      if (value !== null) {
+        teleTimeoutCountRef.current.set(name, 0);
+        next.set(name, value);
+        changed = true;
+      } else {
+        const count = (teleTimeoutCountRef.current.get(name) ?? 0) + 1;
+        teleTimeoutCountRef.current.set(name, count);
+        if (count > 0 && count % 5 === 0) {
+          console.warn(`[drone] telemetry read "${name}" has timed out ${count} times in a row`);
+        }
+      }
+    }
+
+    if (changed) {
+      teleValuesRef.current = next;
+      setTeleValues(next);
+    }
+
+    if (teleActiveRef.current) {
+      teleTimerRef.current = setTimeout(runTelemetryCycle, TELE_POLL_INTERVAL_MS);
+    }
+  };
+
+  const startTelemetryPolling = () => {
+    if (teleActiveRef.current) return;
+    teleActiveRef.current = true;
+    teleTimeoutCountRef.current = new Map();
+    console.log(`[drone] telemetry polling started: ${TELE_PARAM_NAMES.join(', ')}`);
+    runTelemetryCycle();
+  };
+
+  const stopTelemetryPolling = () => {
+    teleActiveRef.current = false;
+    if (teleTimerRef.current) {
+      clearTimeout(teleTimerRef.current);
+      teleTimerRef.current = null;
+    }
+    teleValuesRef.current = new Map();
+    setTeleValues(new Map());
+  };
+
+  // Streaming from any block created off this TOC will never actually arrive
+  // (see the TELE_PARAM_NAMES comment above) — kept only so log variable
+  // names/types/ids are still visible for debugging, and in case a firmware
+  // fix ever makes logRunBlock() usable over BLE again.
   const fetchLogToc = async () => {
     setLogTocProgress({ loaded: 0, total: 0 });
 
@@ -468,6 +658,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       setLogTocProgress({ loaded: id + 1, total: count });
     }
 
+    logVarsRef.current = entries;
     setLogVars(entries);
     console.log('[drone] log TOC fetched:', entries.size, 'variables');
 
@@ -479,10 +670,11 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     }
   };
 
+  // Reads logVarsRef, not the logVars state — see the comment on logVarsRef.
   const startLogBlock = (blockId: number, names: string[], periodMs: number) => {
     const entries: LogEntry[] = [];
     for (const name of names) {
-      const entry = logVars.get(name);
+      const entry = logVarsRef.current.get(name);
       if (!entry) {
         console.warn(`[drone] Unknown log variable "${name}" — skipping`);
         continue;
@@ -500,6 +692,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     sendPacket(logCreateBlockPacket(blockId, entries));
     sendPacket(logStartBlockPacket(blockId, periodMs));
     console.log(`[drone] started log block ${blockId} at ${periodMs}ms`);
+    console.log(`[drone] block ${blockId} started with: ${entries.map((e) => e.fullName).join(', ')}`);
   };
 
   const stopLogBlock = (blockId: number) => {
@@ -507,6 +700,12 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     sendPacket(logStopBlockPacket(blockId));
     sendPacket(logDeleteBlockPacket(blockId));
     logBlocksRef.current.delete(blockId);
+  };
+
+  // Reads logVarsRef, not the logVars state — see the comment on logVarsRef.
+  // For callers (screens) that need to check availability outside a render.
+  const hasLogVar = (name: string): boolean => {
+    return logVarsRef.current.has(name);
   };
 
   // Diagnostic probe: fires a fixed sequence of raw CRTP packets at ports/
@@ -548,6 +747,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
 
   const cleanupConnection = () => {
     stopPolling();
+    stopTelemetryPolling();
     subscriptionRef.current?.remove();
     subscriptionRef.current = null;
     deviceRef.current = null;
@@ -559,8 +759,10 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     pending.forEach((entry) => entry.reject(new Error('Drone disconnected')));
 
     setIsConnected(false);
+    paramsRef.current = new Map();
     setParams(new Map());
     setTocProgress({ loaded: 0, total: 0 });
+    logVarsRef.current = new Map();
     setLogVars(new Map());
     setLogTocProgress({ loaded: 0, total: 0 });
     setLogValues(new Map());
@@ -620,6 +822,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
           if (!characteristic?.value) return;
 
           const packet = reassemblerRef.current.push(frame);
+          if (packet && crtpPort(packet[0]) === PORT_LOG) {
+            console.log(`[log rx] port=5 channel=${crtpChannel(packet[0])} bytes=${toHex(packet)}`);
+          }
           if (packet) handlePacket(packet);
         }
       );
@@ -640,7 +845,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       setStatus('fetching-toc');
       fetchParamToc()
         .then(() => fetchLogToc())
-        .then(() => startLogBlock(0, ['pm.vbat'], 1000))
+        .then(() => startTelemetryPolling())
         .then(() => setStatus('connected'))
         .catch((error) => {
           console.error('[drone] Failed to fetch parameter/log TOC:', error);
@@ -660,9 +865,6 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     }
 
     console.log(`Disconnecting from ${device.name}...`);
-    // Best-effort — the queue is about to be cleared by cleanupConnection, so
-    // this may not actually reach the drone, but it's cheap to try.
-    stopLogBlock(0);
     // Update the UI immediately so the user isn't left hanging.
     cleanupConnection();
     setStatus('idle');
@@ -756,6 +958,8 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
         logValues,
         startLogBlock,
         stopLogBlock,
+        hasLogVar,
+        teleValues,
       }}
     >
       {children}

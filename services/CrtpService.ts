@@ -205,6 +205,16 @@ export function decodeParamType(typeByte: number): ParamType {
   return TYPE_TABLE[typeByte & 0x0f] ?? "uint8";
 }
 
+const PARAM_TYPE_SIZE: Record<ParamType, number> = {
+  int8: 1,
+  uint8: 1,
+  int16: 2,
+  uint16: 2,
+  int32: 4,
+  uint32: 4,
+  float: 4,
+};
+
 export function paramGetInfoPacket(): Uint8Array {
   return new Uint8Array([
     crtpHeader(PORT_PARAM, PARAM_CHAN_TOC),
@@ -330,18 +340,56 @@ export function parseParamItem(pkt: Uint8Array): ParamEntry | null {
   };
 }
 
+// ---------- Parameter read ----------
+export function paramReadPacket(id: number): Uint8Array {
+  return new Uint8Array([
+    crtpHeader(PORT_PARAM, PARAM_CHAN_READ),
+    id & 0xff,
+    (id >> 8) & 0xff,
+  ]);
+}
+
+export function parseParamValue(
+  pkt: Uint8Array,
+  type: ParamType,
+): { id: number; value: number } | null {
+  // [header][id_lo][id_hi][value bytes...]
+  if (crtpPort(pkt[0]) !== PORT_PARAM) return null;
+  const size = PARAM_TYPE_SIZE[type];
+  if (pkt.length < 3 + size) return null;
+
+  const id = pkt[1] | (pkt[2] << 8);
+  const dv = new DataView(pkt.buffer, pkt.byteOffset + 3, size);
+  let value: number;
+  switch (type) {
+    case "int8":
+      value = dv.getInt8(0);
+      break;
+    case "uint8":
+      value = dv.getUint8(0);
+      break;
+    case "int16":
+      value = dv.getInt16(0, true);
+      break;
+    case "uint16":
+      value = dv.getUint16(0, true);
+      break;
+    case "int32":
+      value = dv.getInt32(0, true);
+      break;
+    case "uint32":
+      value = dv.getUint32(0, true);
+      break;
+    case "float":
+      value = dv.getFloat32(0, true);
+      break;
+  }
+  return { id, value };
+}
+
 // ---------- Parameter write ----------
 export function encodeValue(value: number, type: ParamType): Uint8Array {
-  const sizes: Record<ParamType, number> = {
-    int8: 1,
-    uint8: 1,
-    int16: 2,
-    uint16: 2,
-    int32: 4,
-    uint32: 4,
-    float: 4,
-  };
-  const buf = new ArrayBuffer(sizes[type]);
+  const buf = new ArrayBuffer(PARAM_TYPE_SIZE[type]);
   const dv = new DataView(buf);
   switch (type) {
     case "int8":
@@ -539,6 +587,15 @@ export function parseLogItem(pkt: Uint8Array | null | undefined): LogEntry | nul
   };
 }
 
+// cflib packs BOTH a fetch-as type (low nibble) and a stored-as type (high
+// nibble) into this byte — see LogVariable.get_storage_and_fetch_byte() in
+// cflib/crazyflie/log.py. We always fetch a variable as its native stored
+// type, so both nibbles carry the same value (e.g. float -> 0x77, not 0x07).
+function storageAndFetchByte(type: LogType): number {
+  const t = LOG_TYPE_TO_BYTE[type] & 0x0f;
+  return t | (t << 4);
+}
+
 export function logCreateBlockPacket(blockId: number, vars: LogEntry[]): Uint8Array {
   const out = new Uint8Array(3 + vars.length * 3);
   out[0] = crtpHeader(PORT_LOG, LOG_CHAN_CTRL);
@@ -546,7 +603,7 @@ export function logCreateBlockPacket(blockId: number, vars: LogEntry[]): Uint8Ar
   out[2] = blockId & 0xff;
   let offset = 3;
   for (const v of vars) {
-    out[offset++] = LOG_TYPE_TO_BYTE[v.type];
+    out[offset++] = storageAndFetchByte(v.type);
     out[offset++] = v.id & 0xff;
     out[offset++] = (v.id >> 8) & 0xff;
   }
@@ -630,6 +687,8 @@ export function decodeLogData(
     values.push(readLogValue(dv, offset, entry.type));
     offset += size;
   }
+
+  console.log(`[log decode] block=${blockId} ts=${timestamp} values=${values.join(", ")}`);
 
   return { blockId, timestamp, values };
 }

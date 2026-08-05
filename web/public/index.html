@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CaveBat</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <h1>CAVEBAT</h1>
+      <p class="tagline">Autonomous wall-following flight for the Crazyflie, with live 3D path visualisation.</p>
+    </div>
+  </header>
+
+  <main class="content">
+
+    <section id="auth-section" class="panel">
+      <div class="panel-header">
+        <span id="auth-title">LOG IN</span>
+        <button id="auth-toggle" class="link-btn" type="button">need an account?</button>
+      </div>
+
+      <form id="auth-form">
+        <label for="email">EMAIL</label>
+        <input id="email" name="email" type="email" autocomplete="username" required />
+
+        <label for="password">PASSWORD</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+        <button id="auth-submit" class="primary-btn" type="submit">LOG IN</button>
+      </form>
+
+      <p id="auth-error" class="error" hidden></p>
+    </section>
+
+    <section id="app-section" class="panel" hidden>
+      <div class="panel-header">
+        <span>BUILD</span>
+        <button id="logout-btn" class="link-btn" type="button">log out</button>
+      </div>
+
+      <div id="version-block">
+        <p class="field"><span class="field-label">VERSION</span><span id="version-value">—</span></p>
+        <p class="field-label">RELEASE NOTES</p>
+        <p id="release-notes" class="notes">—</p>
+      </div>
+
+      <button id="download-btn" class="primary-btn" type="button">DOWNLOAD APK</button>
+      <p id="download-error" class="error" hidden></p>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

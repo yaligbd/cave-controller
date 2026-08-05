@@ -142,7 +142,7 @@ export default function ConnectScreen() {
     disconnectFromDrone,
     findParam,
     runCrtpProbe,
-    logValues,
+    teleValues,
   } = useDroneConnection();
 
   const fetching = tocProgress.total > 0 && tocProgress.loaded < tocProgress.total;
@@ -261,7 +261,8 @@ export default function ConnectScreen() {
           </Text>
 
           {(() => {
-            const vbat = logValues.get('pm.vbat');
+            const vbatMv = teleValues.get('tele.vbat');
+            const vbat = vbatMv !== undefined ? vbatMv / 1000 : undefined;
             const percent = vbat !== undefined ? lipoPercent(vbat) : null;
             const batteryColor =
               percent === null
@@ -280,7 +281,7 @@ export default function ConnectScreen() {
                   </Text>
                 </View>
                 <Text style={localStyles.caption}>
-                  {vbat !== undefined ? 'Live reading from pm.vbat' : 'waiting for data'}
+                  {vbat !== undefined ? 'Live reading from tele.vbat' : 'waiting for data'}
                 </Text>
               </>
             );
