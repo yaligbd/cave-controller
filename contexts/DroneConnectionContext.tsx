@@ -14,9 +14,9 @@ import {
   LOG_CHAN_TOC,
   LOG_CMD_GET_INFO,
   LOG_CMD_GET_ITEM,
-  LogEntry,
   logCreateBlockPacket,
   logDeleteBlockPacket,
+  LogEntry,
   logGetInfoPacket,
   logGetItemPacket,
   logStartBlockPacket,
@@ -75,11 +75,12 @@ const POLL_DELAY_MS = 10;
 const WRITE_TIMEOUT_MS = 2000;
 const POLL_HEARTBEAT_MS = 5000;
 
-// Log streaming cannot work over BLE — logRunBlock() in the firmware calls
-// crtpIsConnected(), which resolves to radiolinkIsConnected(), a radio-only
-// check that is always false over Bluetooth. It silently deletes every log
-// block instead of ever transmitting. Sensor data is exposed as read-only
-// parameters in a "tele" group instead, polled here one at a time.
+// Parameter-polling telemetry — built as a workaround under the (wrong)
+// assumption that log streaming couldn't work over BLE. It turned out log
+// streaming does work; this was based on a bad diagnosis. Kept in place,
+// disabled, as a fallback in case that regresses again — flip this on to
+// re-enable polling instead of (or alongside) log-block streaming.
+const TELE_POLLING_ENABLED = false;
 const TELE_PARAM_NAMES = [
   'tele.vbat',
   'tele.front',
@@ -619,10 +620,6 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     setTeleValues(new Map());
   };
 
-  // Streaming from any block created off this TOC will never actually arrive
-  // (see the TELE_PARAM_NAMES comment above) — kept only so log variable
-  // names/types/ids are still visible for debugging, and in case a firmware
-  // fix ever makes logRunBlock() usable over BLE again.
   const fetchLogToc = async () => {
     setLogTocProgress({ loaded: 0, total: 0 });
 
@@ -843,10 +840,24 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       console.log('🚀 DRONE IS FULLY CONNECTED AND READY!');
 
       setStatus('fetching-toc');
-      fetchParamToc()
-        .then(() => fetchLogToc())
-        .then(() => startTelemetryPolling())
-        .then(() => setStatus('connected'))
+fetchParamToc()
+  .then(() => fetchLogToc())
+  .then(() => {
+    setTimeout(() => {
+      startLogBlock(0, [
+        'pm.vbat',
+        'range.front',
+        'range.back',
+        'range.left',
+        'range.right',
+        'range.up',
+        'range.zrange'
+      ], 100);
+    }, 500);
+
+    if (TELE_POLLING_ENABLED) startTelemetryPolling();
+  })
+.then(() => setStatus('connected'))
         .catch((error) => {
           console.error('[drone] Failed to fetch parameter/log TOC:', error);
           setStatus('error', `Failed to read parameter list: ${error instanceof Error ? error.message : String(error)}`);
@@ -865,6 +876,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     }
 
     console.log(`Disconnecting from ${device.name}...`);
+    // Best-effort — the queue is about to be cleared by cleanupConnection, so
+    // this may not actually reach the drone, but it's cheap to try.
+    stopLogBlock(0);
     // Update the UI immediately so the user isn't left hanging.
     cleanupConnection();
     setStatus('idle');

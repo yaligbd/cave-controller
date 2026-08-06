@@ -4,13 +4,16 @@ import { useDroneConnection } from '@/contexts/DroneConnectionContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-// Bar-fill clamp only — a reading isn't considered "no detection" for going
-// past this, only a literal 0 is (see renderReading).
+const BLOCK_ID = 1;
+const RANGE_NAMES = ['range.front', 'range.back', 'range.left', 'range.right', 'range.up', 'range.zrange'];
 const NO_DETECTION_MM = 2000;
+// There is no down-facing sensor on the multiranger deck — this is the Flow
+// deck's z-ranger, reported under the same range.* log group.
+const DOWN_RANGE_NAME = 'range.zrange';
 
 function readingColor(mm: number, palette: Palette): string {
   if (mm < 200) return palette.fault;
@@ -21,16 +24,33 @@ function readingColor(mm: number, palette: Palette): string {
 export default function SensorsScreen() {
   const { styles, palette } = useTheme();
   const router = useRouter();
-  const { isConnected, teleValues } = useDroneConnection();
+  const { isConnected, logValues, startLogBlock, stopLogBlock, hasLogVar } = useDroneConnection();
+
+  useEffect(() => {
+    startLogBlock(BLOCK_ID, RANGE_NAMES, 100);
+    return () => stopLogBlock(BLOCK_ID);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const localStyles = useMemo(() => createLocalStyles(palette), [palette]);
 
-  const renderReading = (label: string, name: string) => {
-    const raw = teleValues.get(name);
-    // 0mm means "nothing detected" — never show a number for it.
-    const mm = raw !== undefined && raw > 0 ? raw : null;
+  const renderReading = (label: string, name: string, checkAvailable = false) => {
+    if (checkAvailable && !hasLogVar(name)) {
+      return (
+        <View style={localStyles.readoutCell} key={name}>
+          <Text style={localStyles.readoutLabel}>{label}</Text>
+          <Text style={[localStyles.readoutValue, { color: palette.textMuted }]}>—</Text>
+          <Text style={localStyles.notAvailableText}>not available</Text>
+        </View>
+      );
+    }
+
+    const raw = logValues.get(name);
+    // 0mm or beyond the sensor's usable range both mean "nothing detected" —
+    // never show a number for either.
+    const mm = raw !== undefined && raw > 0 && raw <= NO_DETECTION_MM ? raw : null;
     const color = mm !== null ? readingColor(mm, palette) : palette.textMuted;
-    const fraction = mm !== null ? Math.min(mm, NO_DETECTION_MM) / NO_DETECTION_MM : 0;
+    const fraction = mm !== null ? mm / NO_DETECTION_MM : 0;
 
     return (
       <View style={localStyles.readoutCell} key={name}>
@@ -59,22 +79,22 @@ export default function SensorsScreen() {
         ) : (
           <>
             <View style={localStyles.cross}>
-              <View style={localStyles.crossRow}>{renderReading('FRONT', 'tele.front')}</View>
+              <View style={localStyles.crossRow}>{renderReading('FRONT', 'range.front')}</View>
               <View style={[localStyles.crossRow, localStyles.crossMiddleRow]}>
-                {renderReading('LEFT', 'tele.left')}
+                {renderReading('LEFT', 'range.left')}
                 <View style={localStyles.centerStack}>
-                  {renderReading('UP', 'tele.up')}
-                  {renderReading('DOWN (FLOW)', 'tele.down')}
+                  {renderReading('UP', 'range.up')}
+                  {renderReading('DOWN (FLOW)', DOWN_RANGE_NAME, true)}
                 </View>
-                {renderReading('RIGHT', 'tele.right')}
+                {renderReading('RIGHT', 'range.right')}
               </View>
-              <View style={localStyles.crossRow}>{renderReading('BACK', 'tele.back')}</View>
+              <View style={localStyles.crossRow}>{renderReading('BACK', 'range.back')}</View>
             </View>
 
             <Text style={localStyles.caption}>
-              Multi-ranger reports distance in millimetres. A reading of 0mm means no target detected, shown as
-              “—”. DOWN (FLOW) comes from the Flow deck’s z-ranger, not the multiranger — the multiranger deck only
-              covers front, back, left, right and up.
+              Multi-ranger reports distance in millimetres. 0mm or a reading beyond {NO_DETECTION_MM}mm means no
+              target detected, shown as “—”. DOWN (FLOW) comes from the Flow deck’s z-ranger, not the multiranger —
+              the multiranger deck only covers front, back, left, right and up.
             </Text>
           </>
         )}
@@ -140,6 +160,12 @@ function createLocalStyles(palette: Palette) {
       fontFamily: type.fontFamily,
       fontSize: type.readout,
       fontWeight: 'bold',
+    },
+    notAvailableText: {
+      fontFamily: type.fontFamily,
+      fontSize: type.micro,
+      color: palette.textMuted,
+      marginTop: spacing.sm,
     },
     barTrack: {
       width: '100%',

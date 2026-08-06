@@ -1,16 +1,36 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, View, TouchableOpacity, Text, Modal, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { FlightData } from '@/types/flightT';
 
 interface SimulatorWebViewProps {
-  flightData: FlightData;
+  flightData?: FlightData;
+  livePoint?: {
+    x: number;
+    y: number;
+    z: number;
+    yaw: number;
+    sensors: { front: number; back: number; left: number; right: number; up: number; down: number; };
+  };
 }
 
-export default function SimulatorWebView({ flightData }: SimulatorWebViewProps) {
+export default function SimulatorWebView({ flightData, livePoint }: SimulatorWebViewProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isModalLoading, setIsModalLoading] = useState(true);
+  const webviewRef = useRef<WebView>(null);
+  const modalWebviewRef = useRef<WebView>(null);
+
+  useEffect(() => {
+    if (livePoint) {
+      const script = `if (window.pushLivePoint) { window.pushLivePoint(${JSON.stringify(livePoint)}); } true;`;
+      if (isFullscreen && modalWebviewRef.current) {
+        modalWebviewRef.current.injectJavaScript(script);
+      } else if (!isFullscreen && webviewRef.current) {
+        webviewRef.current.injectJavaScript(script);
+      }
+    }
+  }, [livePoint, isFullscreen]);
   
   const serializedData = JSON.stringify(flightData);
 
@@ -62,34 +82,100 @@ export default function SimulatorWebView({ flightData }: SimulatorWebViewProps) 
             right: 0xbf5af2, up: 0x5ac8fa, down: 0xffd60a
           };
 
-          const length = flightData.time.length;
           let lastValidP3D = new THREE.Vector3(0,0,0);
+          let pathLine = null;
 
-          for (let i = 0; i < length; i++) {
-            const t = flightData.time[i];
-            const yawRad = (flightData.yaw[i] || 0) * (Math.PI / 180);
-            
-            if (i > 0) {
-              const dt = t - flightData.time[i-1];
-              currentX += Math.cos(yawRad) * 1.5 * dt;
-              currentY += Math.sin(yawRad) * 1.5 * dt;
+          if (flightData && flightData.time) {
+            const length = flightData.time.length;
+            for (let i = 0; i < length; i++) {
+              const t = flightData.time[i];
+              const yawRad = (flightData.yaw[i] || 0) * (Math.PI / 180);
+              
+              if (i > 0) {
+                const dt = t - flightData.time[i-1];
+                currentX += Math.cos(yawRad) * 1.5 * dt;
+                currentY += Math.sin(yawRad) * 1.5 * dt;
+              }
+
+              const heightZ = (flightData.downSensor[i] || 0);
+              const p3d = new THREE.Vector3(currentX, heightZ, currentY);
+              pathPoints.push(p3d);
+              lastValidP3D = p3d;
+
+              const sensorRays = [
+                { val: flightData.frontSensor[i], dir: new THREE.Vector3(Math.cos(yawRad), 0, Math.sin(yawRad)), col: colors.front },
+                { val: flightData.backSensor[i], dir: new THREE.Vector3(-Math.cos(yawRad), 0, -Math.sin(yawRad)), col: colors.back },
+                { val: flightData.leftSensor[i], dir: new THREE.Vector3(-Math.sin(yawRad), 0, Math.cos(yawRad)), col: colors.left },
+                { val: flightData.rightSensor[i], dir: new THREE.Vector3(Math.sin(yawRad), 0, -Math.cos(yawRad)), col: colors.right },
+                { val: flightData.TopSensor[i], dir: new THREE.Vector3(0, 1, 0), col: colors.up }
+              ];
+
+              sensorRays.forEach(ray => {
+                if (ray.val && ray.val < 15.0) {
+                  const endpoint = p3d.clone().add(ray.dir.multiplyScalar(ray.val));
+                  const lineGeo = new THREE.BufferGeometry().setFromPoints([p3d, endpoint]);
+                  const lineMat = new THREE.LineBasicMaterial({ color: ray.col, transparent: true, opacity: 0.3 });
+                  raysGroup.add(new THREE.Line(lineGeo, lineMat));
+                  
+                  const dotGeo = new THREE.SphereGeometry(0.05, 4, 4);
+                  const dotMat = new THREE.MeshBasicMaterial({ color: ray.col });
+                  const dot = new THREE.Mesh(dotGeo, dotMat);
+                  dot.position.copy(endpoint);
+                  scene.add(dot);
+                }
+              });
             }
 
-            const heightZ = (flightData.downSensor[i] || 0);
-            const p3d = new THREE.Vector3(currentX, heightZ, currentY);
+            if (pathPoints.length > 1) {
+              const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
+              const pathMaterial = new THREE.LineBasicMaterial({ color: 0xE8EDF2, linewidth: 2 });
+              pathLine = new THREE.Line(pathGeometry, pathMaterial);
+              scene.add(pathLine);
+              
+              const midPoint = pathPoints[Math.floor(pathPoints.length / 2)];
+              controls.target.copy(midPoint);
+              camera.position.set(midPoint.x + 10, midPoint.y + 8, midPoint.z + 10);
+            }
+          }
+
+          const droneGeo = new THREE.SphereGeometry(0.3, 8, 8);
+          const droneMat = new THREE.MeshBasicMaterial({ color: 0x3A8FCC });
+          const droneMesh = new THREE.Mesh(droneGeo, droneMat);
+          droneMesh.position.copy(lastValidP3D);
+          scene.add(droneMesh);
+          
+          if (!flightData || !flightData.time) {
+            camera.position.set(5, 5, 5);
+            controls.target.set(0, 0, 0);
+          }
+
+          window.pushLivePoint = function(pt) {
+            const p3d = new THREE.Vector3(pt.x, pt.z, pt.y); // Note mapping from (x,y,z) drone space
             pathPoints.push(p3d);
             lastValidP3D = p3d;
 
+            if (pathPoints.length > 1) {
+              if (pathLine) scene.remove(pathLine);
+              const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
+              const pathMaterial = new THREE.LineBasicMaterial({ color: 0x30d158, linewidth: 3 });
+              pathLine = new THREE.Line(pathGeometry, pathMaterial);
+              scene.add(pathLine);
+            }
+            
+            droneMesh.position.copy(p3d);
+
+            const yawRad = pt.yaw * (Math.PI / 180);
             const sensorRays = [
-              { val: flightData.frontSensor[i], dir: new THREE.Vector3(Math.cos(yawRad), 0, Math.sin(yawRad)), col: colors.front },
-              { val: flightData.backSensor[i], dir: new THREE.Vector3(-Math.cos(yawRad), 0, -Math.sin(yawRad)), col: colors.back },
-              { val: flightData.leftSensor[i], dir: new THREE.Vector3(-Math.sin(yawRad), 0, Math.cos(yawRad)), col: colors.left },
-              { val: flightData.rightSensor[i], dir: new THREE.Vector3(Math.sin(yawRad), 0, -Math.cos(yawRad)), col: colors.right },
-              { val: flightData.TopSensor[i], dir: new THREE.Vector3(0, 1, 0), col: colors.up }
+              { val: pt.sensors.front, dir: new THREE.Vector3(Math.cos(yawRad), 0, Math.sin(yawRad)), col: colors.front },
+              { val: pt.sensors.back, dir: new THREE.Vector3(-Math.cos(yawRad), 0, -Math.sin(yawRad)), col: colors.back },
+              { val: pt.sensors.left, dir: new THREE.Vector3(-Math.sin(yawRad), 0, Math.cos(yawRad)), col: colors.left },
+              { val: pt.sensors.right, dir: new THREE.Vector3(Math.sin(yawRad), 0, -Math.cos(yawRad)), col: colors.right },
+              { val: pt.sensors.up, dir: new THREE.Vector3(0, 1, 0), col: colors.up },
+              { val: pt.sensors.down, dir: new THREE.Vector3(0, -1, 0), col: colors.down }
             ];
 
             sensorRays.forEach(ray => {
-              if (ray.val && ray.val < 15.0) {
+              if (ray.val > 0 && ray.val < 15.0) {
                 const endpoint = p3d.clone().add(ray.dir.multiplyScalar(ray.val));
                 const lineGeo = new THREE.BufferGeometry().setFromPoints([p3d, endpoint]);
                 const lineMat = new THREE.LineBasicMaterial({ color: ray.col, transparent: true, opacity: 0.3 });
@@ -102,23 +188,9 @@ export default function SimulatorWebView({ flightData }: SimulatorWebViewProps) 
                 scene.add(dot);
               }
             });
-          }
-
-          if (pathPoints.length > 1) {
-            const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
-            const pathMaterial = new THREE.LineBasicMaterial({ color: 0xE8EDF2, linewidth: 2 });
-            scene.add(new THREE.Line(pathGeometry, pathMaterial));
             
-            const midPoint = pathPoints[Math.floor(pathPoints.length / 2)];
-            controls.target.copy(midPoint);
-            camera.position.set(midPoint.x + 10, midPoint.y + 8, midPoint.z + 10);
-          }
-
-          const droneGeo = new THREE.SphereGeometry(0.3, 8, 8);
-          const droneMat = new THREE.MeshBasicMaterial({ color: 0x3A8FCC });
-          const droneMesh = new THREE.Mesh(droneGeo, droneMat);
-          droneMesh.position.copy(lastValidP3D);
-          scene.add(droneMesh);
+            controls.target.copy(p3d);
+          };
 
           // Handle device rotation or fullscreen transitions
           window.addEventListener('resize', () => {
@@ -143,8 +215,9 @@ export default function SimulatorWebView({ flightData }: SimulatorWebViewProps) 
   `;
 
   // A reusable WebView component to keep the markup clean
-  const WebViewComponent = ({ onLoadEnd }: { onLoadEnd?: () => void }) => (
+  const WebViewComponent = ({ webRef, onLoadEnd }: { webRef: React.RefObject<WebView>, onLoadEnd?: () => void }) => (
     <WebView
+      ref={webRef}
       originWhitelist={['*']}
       source={{ html: htmlContent, baseUrl: 'https://localhost' }}
       style={styles.webview}
@@ -159,7 +232,7 @@ export default function SimulatorWebView({ flightData }: SimulatorWebViewProps) 
   return (
     <>
       <View style={styles.inlineContainer}>
-        <WebViewComponent />
+        <WebViewComponent webRef={webviewRef} />
         <TouchableOpacity style={styles.expandButton} onPress={() => {
           setIsModalLoading(true); // Reset loading state when opening
           setIsFullscreen(true);
@@ -176,7 +249,7 @@ export default function SimulatorWebView({ flightData }: SimulatorWebViewProps) 
               <Text style={styles.loadingText}>Fetching 3D Engine...</Text>
             </View>
           )}
-          <WebViewComponent onLoadEnd={() => setIsModalLoading(false)} />
+          <WebViewComponent webRef={modalWebviewRef} onLoadEnd={() => setIsModalLoading(false)} />
           <TouchableOpacity style={styles.closeButton} onPress={() => setIsFullscreen(false)}>
             <Text style={styles.buttonText}>✕ CLOSE</Text>
           </TouchableOpacity>
