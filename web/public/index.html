@@ -35,20 +35,96 @@
       <p id="auth-error" class="error" hidden></p>
     </section>
 
-    <section id="app-section" class="panel" hidden>
+    <section id="onboarding-section" class="panel" hidden>
       <div class="panel-header">
-        <span>BUILD</span>
+        <span>SETUP</span>
         <button id="logout-btn" class="link-btn" type="button">log out</button>
       </div>
 
-      <div id="version-block">
-        <p class="field"><span class="field-label">VERSION</span><span id="version-value">—</span></p>
-        <p class="field-label">RELEASE NOTES</p>
-        <p id="release-notes" class="notes">—</p>
+      <div class="progress">
+        <span id="progress-label" class="progress-label">STEP 1 OF 5</span>
+        <div class="progress-dots" id="progress-dots">
+          <span class="dot" data-dot="1"></span>
+          <span class="dot" data-dot="2"></span>
+          <span class="dot" data-dot="3"></span>
+          <span class="dot" data-dot="4"></span>
+          <span class="dot" data-dot="5"></span>
+        </div>
+        <button id="skip-link" class="link-btn" type="button">skip to download</button>
       </div>
 
-      <button id="download-btn" class="primary-btn" type="button">DOWNLOAD APK</button>
-      <p id="download-error" class="error" hidden></p>
+      <div id="wizard-steps">
+
+        <div class="wizard-step" data-step="1">
+          <h3>Step 1 — Hardware</h3>
+          <p>Before you fly, gather the following:</p>
+          <ul>
+            <li>Crazyflie 2.x</li>
+            <li>Flow deck v2 — downward laser ranging and optical flow, used to hold position</li>
+            <li>Multi-ranger deck — front / back / left / right / up laser ranging, used for obstacle detection</li>
+            <li>Crazyradio PA</li>
+            <li>A charged LiPo battery</li>
+          </ul>
+          <p>The decks mount on the Crazyflie's expansion headers: the Flow deck underneath, the Multi-ranger deck on top.</p>
+        </div>
+
+        <div class="wizard-step" data-step="2" hidden>
+          <h3>Step 2 — Assembly</h3>
+          <ol>
+            <li>Mount the Flow deck v2 underneath the Crazyflie, connector aligned with the expansion header.</li>
+            <li>Mount the Multi-ranger deck on top, with its four side sensors facing front, back, left, and right.</li>
+            <li>Check that each propeller is on the correct motor — mixed-up propellers will flip the drone on takeoff.</li>
+            <li>Charge the LiPo battery fully before flight.</li>
+          </ol>
+          <p class="notice">The Flow deck needs a textured, well-lit surface to hold position. Bare glossy floors will not work.</p>
+        </div>
+
+        <div class="wizard-step" data-step="3" hidden>
+          <h3>Step 3 — Firmware</h3>
+          <p>CaveBat runs custom firmware that must be flashed once from a PC over a Crazyradio — stock firmware cannot fly a mission.</p>
+          <ol>
+            <li>Install the ARM toolchain — see <a href="https://www.bitcraze.io/documentation/start/" target="_blank" rel="noopener">Bitcraze's documentation</a>.</li>
+            <li>Put the drone in bootloader mode: hold the power button for about 3 seconds until the LEDs change pattern.</li>
+            <li>Flash the firmware with cfloader:</li>
+          </ol>
+          <div class="code-block">
+            <code id="cfloader-cmd">python3 -m cfloader flash cf2.bin stm32-fw</code>
+            <button id="copy-cfloader-btn" class="copy-btn" type="button">copy</button>
+          </div>
+          <button id="firmware-download-btn" class="primary-btn" type="button">DOWNLOAD FIRMWARE</button>
+          <p id="firmware-error" class="error" hidden></p>
+          <p class="notice">After any Crazyradio session, power-cycle the drone before it will accept a Bluetooth connection.</p>
+        </div>
+
+        <div class="wizard-step" data-step="4" hidden>
+          <h3>Step 4 — Using the app</h3>
+          <ol>
+            <li>Connect to the drone over Bluetooth from the CaveBat app.</li>
+            <li>Run through the hardware checklist — each tick confirms a deck or sensor responded and is ready.</li>
+            <li>Set a hover timer and altitude for the mission.</li>
+            <li>Use the abort button any time to cut the mission short.</li>
+          </ol>
+          <p class="notice">Always test with propellers removed first. Fly only in an open space with at least 2m of clearance on all sides.</p>
+        </div>
+
+        <div class="wizard-step" data-step="5" hidden>
+          <h3>Step 5 — Download</h3>
+          <p>You're set up. Grab the latest CaveBat build below.</p>
+          <div id="version-block">
+            <p class="field"><span class="field-label">VERSION</span><span id="version-value">—</span></p>
+            <p class="field-label">RELEASE NOTES</p>
+            <p id="release-notes" class="notes">—</p>
+          </div>
+          <button id="download-btn" class="primary-btn" type="button">DOWNLOAD APK</button>
+          <p id="download-error" class="error" hidden></p>
+        </div>
+
+      </div>
+
+      <div class="wizard-nav">
+        <button id="back-btn" class="secondary-btn" type="button">← BACK</button>
+        <button id="next-btn" class="primary-btn" type="button">NEXT →</button>
+      </div>
     </section>
 
   </main>

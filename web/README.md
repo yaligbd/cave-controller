@@ -27,12 +27,24 @@ The app is served at `http://localhost:4000` (or whatever `PORT` is set to).
 
 ## API
 
-| Method | Path             | Auth   | Body / Notes                          |
-|--------|------------------|--------|----------------------------------------|
-| POST   | `/api/register`  | none   | `{ email, password }` -> `{ token }`  |
-| POST   | `/api/login`     | none   | `{ email, password }` -> `{ token }`  |
-| GET    | `/api/version`   | none   | `{ version, releaseNotes, apkUrl }`   |
-| GET    | `/api/download`  | Bearer | `{ apkUrl }`; 401 without a valid JWT |
+| Method | Path              | Auth   | Body / Notes                                        |
+|--------|-------------------|--------|------------------------------------------------------|
+| POST   | `/api/register`   | none   | `{ email, password }` -> `{ token, onboardingStep }` |
+| POST   | `/api/login`      | none   | `{ email, password }` -> `{ token, onboardingStep }` |
+| GET    | `/api/version`    | none   | `{ version, releaseNotes, apkUrl }`                  |
+| GET    | `/api/download`   | Bearer | `{ apkUrl }`; 401 without a valid JWT                |
+| GET    | `/api/firmware`   | Bearer | `{ version, url, notes }`; 401 without a valid JWT   |
+| PATCH  | `/api/onboarding` | Bearer | `{ step }` -> `{ onboardingStep }`; 401 without a valid JWT |
+
+## Data models
+
+- `User` — `email`, `passwordHash`, `onboardingStep` (number, default `0`,
+  tracks progress through the post-login onboarding wizard).
+- `Version` — `version`, `releaseNotes`, `apkUrl`, `createdAt`. Backs
+  `/api/version` and `/api/download`. Seeded once on first boot if empty.
+- `Firmware` — `version`, `url`, `notes`, `createdAt`. Backs `/api/firmware`,
+  the same shape as `Version` but for the STM32 firmware binary flashed over
+  Crazyradio. Seeded once on first boot if empty, mirroring `Version`.
 
 ## Environment variables
 
@@ -55,8 +67,9 @@ See `.env.example`:
    - `PORT` — Render provides this automatically; you don't need to set it
      yourself, but the app reads it if present.
 4. Deploy. On first boot the server seeds a single placeholder `Version`
-   document if the collection is empty — update it directly in Atlas (or via
-   a script) once you have a real APK URL to publish.
+   document and a single placeholder `Firmware` document if their collections
+   are empty — update them directly in Atlas (or via a script) once you have
+   a real APK URL and firmware binary URL to publish.
 
 ## MongoDB Atlas
 
