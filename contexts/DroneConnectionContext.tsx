@@ -51,7 +51,7 @@ export const CRAZYFLIE_RX = CRAZYFLIE_CRTP_UP;
 
 // Diagnostics only — logs every raw CRTP frame/packet over BLE so we can see
 // exactly what goes over the wire. Does not affect protocol behavior.
-const CRTP_DEBUG = true;
+const CRTP_DEBUG = false;
 
 const toHex = (bytes: Uint8Array): string =>
   Array.from(bytes)
@@ -59,7 +59,10 @@ const toHex = (bytes: Uint8Array): string =>
     .join(' ');
 
 const SCAN_TIMEOUT_MS = 10000;
-const DEFAULT_REQUEST_TIMEOUT_MS = 1000;
+// 1000ms was too short: the drone floods the link with console text on boot,
+// and a TOC reply queued behind that flood arrived AFTER the request had
+// already been declared failed. The reply was never missing, only late.
+const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
 
 // The nRF51 BLE bridge only pushes a CRTPDOWN notification in response to a
 // CRTPUP/CRTP write — it never sends anything unprompted. To match the

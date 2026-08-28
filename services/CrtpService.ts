@@ -100,6 +100,11 @@ export function fragmentForBle(packet: Uint8Array, pid: number): Uint8Array[] {
 }
 
 // Diagnostics only — temporary, verbose hex logging for CrtpReassembler.push.
+// Off by default. These fire on EVERY BLE notification for the whole life of
+// the connection and build a hex string each time. Left on, they generate tens
+// of thousands of console lines within minutes, which starves the JS thread
+// badly enough to miss real replies inside their timeout window.
+const REASM_DEBUG = false;
 const reasmHex = (bytes: Uint8Array | number[]): string =>
   Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -127,17 +132,17 @@ export class CrtpReassembler {
 
     if (this.bufferedLength > 0 && pid === this.bufferedPid) {
       // Continuation of an already-open buffer.
-      console.log(
+      if (REASM_DEBUG) console.log(
         `[reasm cont] ctrl=0x${ctrl.toString(16).padStart(2, "0")} pid=${pid} bufBefore=${this.buf.length} contPayloadLen=${payload.length} contBytes=${reasmHex(payload)}`,
       );
       this.buf = this.buf.concat(Array.from(payload));
-      console.log(`[reasm cont] bufAfter=${reasmHex(this.buf)}`);
+      if (REASM_DEBUG) console.log(`[reasm cont] bufAfter=${reasmHex(this.buf)}`);
       if (this.buf.length >= this.bufferedLength) {
         const done = new Uint8Array(this.buf.slice(0, this.bufferedLength));
-        console.log(
+        if (REASM_DEBUG) console.log(
           `[crtp reasm] completed pid=${pid} total=${this.bufferedLength}`,
         );
-        console.log(
+        if (REASM_DEBUG) console.log(
           `[reasm deliver] len=${done.length} bytes=${reasmHex(done)}`,
         );
         this.buf = [];
@@ -156,17 +161,17 @@ export class CrtpReassembler {
     if (payload.length >= length) {
       // The whole packet fit in this one notification.
       const done = new Uint8Array(payload.slice(0, length));
-      console.log(`[reasm deliver] len=${done.length} bytes=${reasmHex(done)}`);
+      if (REASM_DEBUG) console.log(`[reasm deliver] len=${done.length} bytes=${reasmHex(done)}`);
       return done;
     }
 
     this.buf = Array.from(payload);
     this.bufferedPid = pid;
     this.bufferedLength = length;
-    console.log(
+    if (REASM_DEBUG) console.log(
       `[crtp reasm] opened pid=${pid} expected=${length} got=${payload.length}`,
     );
-    console.log(
+    if (REASM_DEBUG) console.log(
       `[reasm open] ctrl=0x${ctrl.toString(16).padStart(2, "0")} field=${length} payloadLen=${payload.length} bytes=${reasmHex(payload)}`,
     );
     return null;
@@ -688,7 +693,7 @@ export function decodeLogData(
     offset += size;
   }
 
-  console.log(`[log decode] block=${blockId} ts=${timestamp} values=${values.join(", ")}`);
+  if (REASM_DEBUG) console.log(`[log decode] block=${blockId} ts=${timestamp} values=${values.join(", ")}`);
 
   return { blockId, timestamp, values };
 }
