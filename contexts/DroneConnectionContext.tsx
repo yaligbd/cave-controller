@@ -525,6 +525,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     setTocProgress({ loaded: 0, total: count });
 
     const entries = new Map<string, ParamEntry>();
+    let paramTimeouts = 0;
     for (let id = 0; id < count; id++) {
       try {
         const itemPacket = await request(
@@ -535,12 +536,13 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
         const entry = parseParamItem(itemPacket);
         if (entry) entries.set(entry.fullName, entry);
       } catch {
+        paramTimeouts += 1;
         console.warn(`[drone] Timed out fetching param TOC entry ${id}, skipping`);
       }
       setTocProgress({ loaded: id + 1, total: count });
     }
 
-    await saveToc('param', count, crc, entries);
+    await saveToc('param', count, crc, entries, paramTimeouts);
 
     paramsRef.current = entries;
     setParams(entries);
@@ -673,6 +675,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     setLogTocProgress({ loaded: 0, total: count });
 
     const entries = new Map<string, LogEntry>();
+    let logTimeouts = 0;
     for (let id = 0; id < count; id++) {
       let itemPacket: Uint8Array | undefined;
       try {
@@ -682,6 +685,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
           3000
         );
       } catch {
+        logTimeouts += 1;
         console.warn(`[drone] Timed out fetching log TOC entry ${id}, skipping`);
       }
       // Only parse a packet that actually arrived — a timed-out request must
@@ -693,7 +697,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       setLogTocProgress({ loaded: id + 1, total: count });
     }
 
-    await saveToc('log', count, crc, entries);
+    await saveToc('log', count, crc, entries, logTimeouts);
 
     logVarsRef.current = entries;
     setLogVars(entries);

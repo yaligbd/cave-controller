@@ -96,18 +96,32 @@ export async function saveToc(
   kind: 'param' | 'log',
   count: number,
   crc: number,
-  entries: Map<string, ParamEntry | LogEntry>
+  entries: Map<string, ParamEntry | LogEntry>,
+  timeouts: number
 ): Promise<void> {
   try {
-    // Only cache a catalogue we actually read in full. A partial fetch (some
-    // entries timed out) must not be persisted, or a transient BLE glitch
-    // would be baked in permanently.
-    if (entries.size < count) {
+    // Gate on TIMEOUTS, not on map size.
+    //
+    // Comparing entries.size against count was wrong and defeated the cache
+    // entirely: the map is keyed by name, and corrupted names collide after
+    // repair, so a fully-read catalogue still lands short. Observed: the drone
+    // reported 325 parameters and the map held 312, so nothing was ever
+    // cached and every connection stayed slow.
+    //
+    // A timeout genuinely means we never saw that entry, and baking a
+    // transient BLE glitch in permanently is the thing worth avoiding.
+    if (timeouts > 0) {
       console.warn(
-        `[toc-cache] not caching ${kind}: got ${entries.size} of ${count} entries, ` +
-          'a partial catalogue would be reused forever'
+        `[toc-cache] not caching ${kind}: ${timeouts} entr${timeouts === 1 ? 'y' : 'ies'} timed out, ` +
+          'so part of the catalogue is genuinely missing'
       );
       return;
+    }
+    if (entries.size < count) {
+      console.log(
+        `[toc-cache] ${kind}: caching ${entries.size} usable names of ${count} entries ` +
+          '(the shortfall is duplicate names after repair, not missing data)'
+      );
     }
 
     await ensureDir();
