@@ -755,6 +755,14 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     entries.length = 0;
     entries.push(...fitted);
 
+    // Delete first, always. Log blocks live on the DRONE and survive a
+    // disconnect -- they are only cleared by an explicit delete or a reboot.
+    // If a previous session ended abruptly ("Operation was cancelled", which
+    // is exactly what a BLE drop looks like), block 0 is still registered and
+    // creating it again is rejected. The symptom is a second connection where
+    // no live data appears at all, while the first connection worked fine.
+    sendPacket(logDeleteBlockPacket(blockId));
+
     logBlocksRef.current.set(blockId, entries);
     console.log(`[drone] creating log block ${blockId} with ${entries.length} variables`);
     sendPacket(logCreateBlockPacket(blockId, entries));
