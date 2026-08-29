@@ -351,7 +351,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
         const err = packet[3];
         const cmdName =
           cmd === 0 ? 'create' : cmd === 1 ? 'append' : cmd === 2 ? 'delete'
-          : cmd === 3 ? 'start' : cmd === 4 ? 'stop' : cmd === 5 ? 'reset' : `cmd${cmd}`;
+          : cmd === 3 ? 'start' : cmd === 4 ? 'stop' : cmd === 5 ? 'RESET-ALL'
+          : cmd === 6 ? 'create-v2' : cmd === 7 ? 'append-v2'
+          : cmd === 8 ? 'start-v2' : `cmd${cmd}`;
         if (err === 0) {
           console.log(`[drone] log ${cmdName} block ${blockId}: OK`);
         } else {
@@ -791,12 +793,15 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     entries.length = 0;
     entries.push(...fitted);
 
-    // Delete first, always. Log blocks live on the DRONE and survive a
-    // disconnect -- they are only cleared by an explicit delete or a reboot.
-    // If a previous session ended abruptly ("Operation was cancelled", which
-    // is exactly what a BLE drop looks like), block 0 is still registered and
-    // creating it again is rejected. The symptom is a second connection where
-    // no live data appears at all, while the first connection worked fine.
+    // Delete THIS block first. Log blocks live on the drone and survive a
+    // disconnect -- only an explicit delete or a reboot clears them -- so an
+    // id left over from a session that ended abruptly would otherwise make
+    // creation fail.
+    //
+    // This must be a per-block delete (command 2), never RESET (command 5).
+    // While DELETE_BLOCK was wrongly defined as 5, this line erased every
+    // block on the drone, so creating block 1 destroyed block 0 and the range
+    // sensors were permanently silent while the battery worked.
     sendPacket(logDeleteBlockPacket(blockId));
 
     logBlocksRef.current.set(blockId, entries);

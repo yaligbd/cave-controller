@@ -447,7 +447,17 @@ export const LOG_CMD_GET_INFO = 3;
 export const LOG_CTRL_CREATE_BLOCK = 6; // v2
 export const LOG_CTRL_START_BLOCK = 3;
 export const LOG_CTRL_STOP_BLOCK = 4;
-export const LOG_CTRL_DELETE_BLOCK = 5;
+// Verified against the firmware's log.c:
+//   CONTROL_CREATE_BLOCK 0, APPEND 1, DELETE 2, START 3, STOP 4,
+//   RESET 5, CREATE_BLOCK_V2 6, APPEND_V2 7, START_V2 8
+//
+// DELETE_BLOCK was 5 here, which is RESET -- "erase EVERY log block on the
+// drone", not "delete this one". So stopping one block silently destroyed all
+// of them. The visible symptom: block 0 (range sensors) was created, then
+// creating block 1 reset it away, so block 1 streamed and block 0 was
+// permanently silent.
+export const LOG_CTRL_DELETE_BLOCK = 2;
+export const LOG_CTRL_RESET = 5;
 
 export type LogType =
   | "uint8"
@@ -639,12 +649,22 @@ export function logStopBlockPacket(blockId: number): Uint8Array {
   ]);
 }
 
+/** Deletes ONE block. See LOG_CTRL_RESET / logResetPacket to clear them all. */
 export function logDeleteBlockPacket(blockId: number): Uint8Array {
   return new Uint8Array([
     crtpHeader(PORT_LOG, LOG_CHAN_CTRL),
     LOG_CTRL_DELETE_BLOCK,
     blockId & 0xff,
   ]);
+}
+
+/**
+ * Erases every log block on the drone. Blocks live on the drone and survive a
+ * disconnect, so this is the right thing to send ONCE when a connection opens
+ * -- never between creating two blocks, which would destroy the first.
+ */
+export function logResetPacket(): Uint8Array {
+  return new Uint8Array([crtpHeader(PORT_LOG, LOG_CHAN_CTRL), LOG_CTRL_RESET]);
 }
 
 // IEEE-754 half-precision -> JS number. Log variables can be stored as fp16
