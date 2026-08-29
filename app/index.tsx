@@ -265,8 +265,15 @@ export default function ConnectScreen() {
             // exists on any firmware. Falling back means the battery still reads
             // out if the drone is running something other than CaveBat, instead
             // of silently showing nothing and looking broken.
-            const vbatMv = logValues.get('tele.vbat') ?? logValues.get('pm.vbat');
-            const vbat = vbatMv !== undefined ? vbatMv / 1000 : undefined;
+            // MIND THE UNITS. tele.vbat is uint16 MILLIVOLTS from cavebat.c;
+            // pm.vbat is a float in VOLTS from the stock firmware. Dividing
+            // both by 1000 would render a healthy 4.03V pack as 0.004V.
+            const teleMv = logValues.get('tele.vbat');
+            const stockV = logValues.get('pm.vbat');
+            const vbat =
+              teleMv !== undefined ? teleMv / 1000
+              : stockV !== undefined ? stockV
+              : undefined;
             // Published by cavebat.c: 1 = enough battery to attempt takeoff.
             // The firmware refuses takeoff on its own; this only mirrors that
             // decision so a refusal is not mistaken for the app being broken.

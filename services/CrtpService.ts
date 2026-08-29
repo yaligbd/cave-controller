@@ -491,7 +491,13 @@ const LOG_TYPE_TO_BYTE: Record<LogType, number> = {
   fp16: 8,
 };
 
-const LOG_TYPE_SIZE: Record<LogType, number> = {
+// A Crazyflie log block's packed payload is capped at LOG_MAX_LEN (26) bytes
+// in the firmware's log.c. Asking for more makes the drone reject the block
+// outright, so NOTHING streams -- not a truncated subset, nothing at all.
+// Exported so callers can check before asking rather than failing silently.
+export const LOG_BLOCK_MAX_BYTES = 26;
+
+export const LOG_TYPE_SIZE: Record<LogType, number> = {
   uint8: 1,
   int8: 1,
   uint16: 2,

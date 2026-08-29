@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useRef, useState } from 'react';
+import { loadToc, saveToc } from '@/services/TocCache';
+import { LOG_BLOCK_MAX_BYTES, LOG_TYPE_SIZE } from '@/services/CrtpService';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { BleManager, Device, State, Subscription } from 'react-native-ble-plx';
 
@@ -504,7 +506,22 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     const info = parseParamInfo(infoPacket);
     if (!info) throw new Error('Failed to parse parameter TOC info');
 
-    const { count } = info;
+    const { count, crc } = info;
+
+    // The drone hands out a CRC of its catalogue before we walk it. If it
+    // matches a catalogue we already saved, the IDs cannot have moved, so
+    // skip ~312 round trips. This is the difference between a 4-minute
+    // connection and a 2-second one.
+    const cachedParams = await loadToc<ParamEntry>('param', count, crc);
+    if (cachedParams) {
+      console.log(`[drone] param TOC from cache: ${cachedParams.size} entries (skipped ${count} round trips)`);
+      paramsRef.current = cachedParams;
+      setParams(cachedParams);
+      setTocProgress({ loaded: count, total: count });
+      return;
+    }
+
+    console.log(`[drone] param TOC not cached, fetching ${count} entries — this is slow, but only once per firmware build`);
     setTocProgress({ loaded: 0, total: count });
 
     const entries = new Map<string, ParamEntry>();
@@ -522,6 +539,8 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       }
       setTocProgress({ loaded: id + 1, total: count });
     }
+
+    await saveToc('param', count, crc, entries);
 
     paramsRef.current = entries;
     setParams(entries);
@@ -639,7 +658,18 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     const info = parseLogInfo(infoPacket);
     if (!info) throw new Error('Failed to parse log TOC info');
 
-    const { count } = info;
+    const { count, crc } = info;
+
+    const cachedLogs = await loadToc<LogEntry>('log', count, crc);
+    if (cachedLogs) {
+      console.log(`[drone] log TOC from cache: ${cachedLogs.size} entries (skipped ${count} round trips)`);
+      logVarsRef.current = cachedLogs;
+      setLogVars(cachedLogs);
+      setLogTocProgress({ loaded: count, total: count });
+      return;
+    }
+
+    console.log(`[drone] log TOC not cached, fetching ${count} entries — this is slow, but only once per firmware build`);
     setLogTocProgress({ loaded: 0, total: count });
 
     const entries = new Map<string, LogEntry>();
@@ -662,6 +692,8 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       }
       setLogTocProgress({ loaded: id + 1, total: count });
     }
+
+    await saveToc('log', count, crc, entries);
 
     logVarsRef.current = entries;
     setLogVars(entries);
@@ -691,6 +723,33 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       console.error(`[drone] No known variables for block ${blockId} — not starting`);
       return;
     }
+
+    // A block over LOG_BLOCK_MAX_BYTES is rejected by the firmware outright,
+    // and nothing streams at all — no partial data, no error the user ever
+    // sees. That is exactly how the battery display silently never worked:
+    // the block asked for 32 bytes against a 26-byte limit. Drop the overflow
+    // and say so, so some data still arrives and the cause is obvious.
+    let used = 0;
+    const fitted: LogEntry[] = [];
+    const dropped: string[] = [];
+    for (const entry of entries) {
+      const size = LOG_TYPE_SIZE[entry.type];
+      if (used + size > LOG_BLOCK_MAX_BYTES) {
+        dropped.push(entry.fullName);
+      } else {
+        fitted.push(entry);
+        used += size;
+      }
+    }
+    if (dropped.length > 0) {
+      console.error(
+        `[drone] log block ${blockId} exceeds the ${LOG_BLOCK_MAX_BYTES}-byte CRTP limit. ` +
+        `Keeping ${fitted.length} variables (${used} bytes), dropping: ${dropped.join(', ')}. ` +
+        'Split them across a second block instead.'
+      );
+    }
+    entries.length = 0;
+    entries.push(...fitted);
 
     logBlocksRef.current.set(blockId, entries);
     console.log(`[drone] creating log block ${blockId} with ${entries.length} variables`);
@@ -879,11 +938,12 @@ fetchParamToc()
       // lookup never resolved and Battery sat on "waiting for data" forever.
       // startLogBlock skips names the connected firmware does not publish,
       // so listing both schemes stays safe on stock firmware.
+      // TWO blocks, deliberately. All of this in one block came to 32 bytes
+      // against a 26-byte firmware limit, so the drone rejected it and no
+      // live data streamed at all — which is why the battery never appeared.
+      //
+      // Block 0, the six range sensors: 6 floats = 24 bytes.
       startLogBlock(0, [
-        'pm.vbat',
-        'tele.vbat',
-        'tele.canfly',
-        'tele.clear',
         'range.front',
         'range.back',
         'range.left',
@@ -891,6 +951,17 @@ fetchParamToc()
         'range.up',
         'range.zrange'
       ], 100);
+
+      // Block 1, battery and mission status: 4 + 2 + 1 + 1 + 2 + 1 = 11 bytes.
+      // Slower period; none of it changes fast, and it keeps the link quiet.
+      startLogBlock(1, [
+        'pm.vbat',
+        'tele.vbat',
+        'tele.canfly',
+        'tele.clear',
+        'tele.maxz',
+        'tele.endwhy'
+      ], 500);
     }, 500);
 
     if (TELE_POLLING_ENABLED) startTelemetryPolling();

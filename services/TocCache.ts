@@ -1,0 +1,143 @@
+// Disk cache for the drone's parameter and log catalogues (its "TOCs").
+//
+// Why this exists
+// ---------------
+// To talk to the drone the app needs the ID number behind each variable name.
+// The only way to learn them over CRTP is to walk the catalogue one entry at a
+// time, and this firmware publishes ~312 parameters and ~370 log variables.
+// Over BLE that is one round trip each, and it was measured at 4-5 MINUTES per
+// connection. The app then threw the result away and did it again next time.
+//
+// The catalogues only change when the firmware changes, and the drone hands
+// out a CRC of each one up front. So: fetch once, save it, and on every later
+// connection compare the CRC. Match means reuse and connect in seconds.
+//
+// This is the same trick cflib uses (its `rw_cache`), which is why a Python
+// script connects to this drone in about two seconds while the app took
+// minutes against the identical hardware.
+
+import * as FileSystem from 'expo-file-system/legacy';
+import type { LogEntry, ParamEntry, ParamType } from './CrtpService';
+
+// Bump when the shape below changes, so old files are discarded rather than
+// misread. The drone's CRC cannot catch a change on our side.
+const CACHE_FORMAT_VERSION = 1;
+
+const cacheDir = () => `${FileSystem.documentDirectory}toc-cache/`;
+
+// One file per (kind, count, crc). Keying on the drone's own CRC means a
+// reflash that changes the catalogue simply misses the cache instead of
+// silently returning stale IDs — the failure mode that would be hardest to
+// debug from the app.
+const cacheFile = (kind: 'param' | 'log', count: number, crc: number) =>
+  `${cacheDir()}${kind}-${count}-${crc >>> 0}.json`;
+
+interface CachedToc {
+  version: number;
+  kind: 'param' | 'log';
+  count: number;
+  crc: number;
+  entries: unknown[];
+}
+
+async function ensureDir(): Promise<void> {
+  const info = await FileSystem.getInfoAsync(cacheDir());
+  if (!info.exists) {
+    await FileSystem.makeDirectoryAsync(cacheDir(), { intermediates: true });
+  }
+}
+
+/**
+ * Returns the cached catalogue for this exact (count, crc), or null on any
+ * miss. Never throws: a cache problem must degrade to a slow connection, not
+ * a failed one.
+ */
+export async function loadToc<T>(
+  kind: 'param' | 'log',
+  count: number,
+  crc: number
+): Promise<Map<string, T> | null> {
+  try {
+    const path = cacheFile(kind, count, crc);
+    const info = await FileSystem.getInfoAsync(path);
+    if (!info.exists) return null;
+
+    const raw = await FileSystem.readAsStringAsync(path);
+    const parsed = JSON.parse(raw) as CachedToc;
+
+    if (
+      parsed.version !== CACHE_FORMAT_VERSION ||
+      parsed.kind !== kind ||
+      parsed.count !== count ||
+      (parsed.crc >>> 0) !== (crc >>> 0) ||
+      !Array.isArray(parsed.entries)
+    ) {
+      return null;
+    }
+
+    const map = new Map<string, T>();
+    for (const e of parsed.entries as { fullName?: string }[]) {
+      if (e && typeof e.fullName === 'string') map.set(e.fullName, e as T);
+    }
+    // An empty file is not a usable cache; treat it as a miss so the app
+    // refetches rather than connecting with no variables at all.
+    return map.size > 0 ? map : null;
+  } catch (e) {
+    console.warn('[toc-cache] load failed, will fetch from the drone:', e);
+    return null;
+  }
+}
+
+/**
+ * Saves a freshly fetched catalogue. Never throws — failing to cache only
+ * costs time on the next connection.
+ */
+export async function saveToc(
+  kind: 'param' | 'log',
+  count: number,
+  crc: number,
+  entries: Map<string, ParamEntry | LogEntry>
+): Promise<void> {
+  try {
+    // Only cache a catalogue we actually read in full. A partial fetch (some
+    // entries timed out) must not be persisted, or a transient BLE glitch
+    // would be baked in permanently.
+    if (entries.size < count) {
+      console.warn(
+        `[toc-cache] not caching ${kind}: got ${entries.size} of ${count} entries, ` +
+          'a partial catalogue would be reused forever'
+      );
+      return;
+    }
+
+    await ensureDir();
+    const payload: CachedToc = {
+      version: CACHE_FORMAT_VERSION,
+      kind,
+      count,
+      crc: crc >>> 0,
+      entries: Array.from(entries.values()),
+    };
+    await FileSystem.writeAsStringAsync(
+      cacheFile(kind, count, crc),
+      JSON.stringify(payload)
+    );
+    console.log(`[toc-cache] saved ${kind} catalogue (${entries.size} entries)`);
+  } catch (e) {
+    console.warn('[toc-cache] save failed, next connection will be slow:', e);
+  }
+}
+
+/** Deletes every cached catalogue. For a "connection is behaving oddly" escape hatch. */
+export async function clearTocCache(): Promise<void> {
+  try {
+    const info = await FileSystem.getInfoAsync(cacheDir());
+    if (info.exists) await FileSystem.deleteAsync(cacheDir(), { idempotent: true });
+    console.log('[toc-cache] cleared');
+  } catch (e) {
+    console.warn('[toc-cache] clear failed:', e);
+  }
+}
+
+// Re-exported so callers do not need to import the entry types from two places.
+export type { LogEntry, ParamEntry, ParamType };
