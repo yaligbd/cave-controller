@@ -32,6 +32,11 @@ export default function SensorsScreen() {
   const router = useRouter();
   const { isConnected, logValues, hasLogVar } = useDroneConnection();
 
+  // Range streaming is currently switched off in DroneConnectionContext -- see
+  // the comment there. Values in logValues would be stale leftovers, and a
+  // frozen number that looks live is worse than an honest "not streaming".
+  const rangeStreaming = logValues.has('range.front');
+
   const localStyles = useMemo(() => createLocalStyles(palette), [palette]);
 
   const renderReading = (label: string, name: string, checkAvailable = false) => {
@@ -45,6 +50,14 @@ export default function SensorsScreen() {
       );
     }
 
+    if (!rangeStreaming) {
+      return (
+        <View style={localStyles.readoutCell} key={name}>
+          <Text style={localStyles.readoutLabel}>{label}</Text>
+          <Text style={[localStyles.readoutValue, { color: palette.textMuted }]}>—</Text>
+        </View>
+      );
+    }
     const raw = logValues.get(name);
     // 0mm or beyond the sensor's usable range both mean "nothing detected" —
     // never show a number for either.

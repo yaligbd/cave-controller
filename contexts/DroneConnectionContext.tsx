@@ -1014,38 +1014,31 @@ fetchParamToc()
       // lookup never resolved and Battery sat on "waiting for data" forever.
       // startLogBlock skips names the connected firmware does not publish,
       // so listing both schemes stays safe on stock firmware.
-      // TWO blocks, deliberately. All of this in one block came to 32 bytes
-      // against a 26-byte firmware limit, so the drone rejected it and no
-      // live data streamed at all — which is why the battery never appeared.
+      // ONE block, five variables, on purpose. Do not add a sixth.
       //
-      // Block 0, the six range sensors: 6 floats = 24 bytes.
+      // A create packet is 3 + 3*N bytes. At five variables that is 18 bytes,
+      // which fits in a single 20-byte BLE notification. At six it becomes 21
+      // bytes and must be split across two notifications -- and split creates
+      // arrive corrupted at the drone. Proof from the device log: the reply to
+      // a six-variable "create block 1" came back as "stop block 0", i.e. the
+      // drone echoed a command byte we never sent. The following start then
+      // failed with ENOENT because no such block existed.
+      //
+      // Running two blocks made it worse: their fragments interleaved, so
+      // WHICH block survived changed from run to run, which is what made this
+      // so hard to pin down.
+      //
+      // The six range sensors are deliberately NOT streamed for now. They are
+      // a feature, not the project, and chasing them was blocking the mission
+      // work. Restore them later -- as their own block, created on its own,
+      // with five variables or fewer.
       startLogBlock(0, [
-        'range.front',
-        'range.back',
-        'range.left',
-        'range.right',
-        'range.up',
-        'range.zrange'
-      ], 100);
-
-      // Block 1, battery and mission status: 4 + 2 + 1 + 1 + 2 + 1 = 11 bytes.
-      // Slower period; none of it changes fast, and it keeps the link quiet.
-      // Staggered on purpose. A create for 6 variables is 21 bytes, which does
-      // not fit one 20-byte BLE notification, so it is sent as two fragments.
-      // Firing both blocks back to back put four fragments in flight at once;
-      // they interleave and the drone reassembles the wrong bytes. The symptom
-      // was one block working and the other failing with ENOENT, and WHICH one
-      // failed changed between runs.
-      setTimeout(() => {
-        startLogBlock(1, [
-          'pm.vbat',
-          'tele.vbat',
-          'tele.canfly',
-          'tele.clear',
-          'tele.maxz',
-          'tele.endwhy'
-        ], 500);
-      }, 1500);
+        'pm.vbat',
+        'tele.vbat',
+        'tele.canfly',
+        'tele.clear',
+        'tele.maxz'
+      ], 500);
     }, 500);
 
     if (TELE_POLLING_ENABLED) startTelemetryPolling();
