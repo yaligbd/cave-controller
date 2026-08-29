@@ -12,6 +12,7 @@ import {
   CrtpReassembler,
   decodeLogData,
   fragmentForBle,
+  LOG_CHAN_CTRL,
   LOG_CHAN_DATA,
   LOG_CHAN_TOC,
   LOG_CMD_GET_INFO,
@@ -243,6 +244,8 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // The entry list a running log block was created with, keyed by blockId,
   // so incoming data packets can be decoded back into named values.
   const logBlocksRef = useRef<Map<number, LogEntry[]>>(new Map());
+  // Block ids that have delivered at least one data packet since being started.
+  const blocksSeenRef = useRef<Set<number>>(new Set());
   // Temporary diagnostic — logs at most once per block if a data packet ever
   // decodes fewer values than the block has variables (e.g. a short/truncated
   // notification), instead of flooding on every packet.
@@ -294,6 +297,10 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // gating) once confirmed working, it will flood the console otherwise.
   const handleLogData = (packet: Uint8Array) => {
     const blockId = packet[1];
+    if (!blocksSeenRef.current.has(blockId)) {
+      blocksSeenRef.current.add(blockId);
+      console.log(`[drone] log block ${blockId}: first data packet received`);
+    }
     const entries = logBlocksRef.current.get(blockId);
     if (!entries) {
       const known = Array.from(logBlocksRef.current.keys()).join(', ') || 'none';
@@ -333,6 +340,35 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
         handleLogData(packet);
         return;
       }
+      // The drone answers every log control command (create / start / stop /
+      // delete) with [cmd, blockId, errorCode]. The app used to discard these,
+      // so a rejected block looked identical to a working one: the app said
+      // "started log block 0" and then simply never received any data, with
+      // nothing anywhere saying why. Surface it.
+      if (crtpChannel(packet[0]) === LOG_CHAN_CTRL && packet.length >= 4) {
+        const cmd = packet[1];
+        const blockId = packet[2];
+        const err = packet[3];
+        const cmdName =
+          cmd === 0 ? 'create' : cmd === 1 ? 'append' : cmd === 2 ? 'delete'
+          : cmd === 3 ? 'start' : cmd === 4 ? 'stop' : cmd === 5 ? 'reset' : `cmd${cmd}`;
+        if (err === 0) {
+          console.log(`[drone] log ${cmdName} block ${blockId}: OK`);
+        } else {
+          // errno values from the firmware: 2 = ENOENT (no such block/variable),
+          // 7 = E2BIG (block too large), 12 = ENOMEM (out of blocks/memory),
+          // 17 = EEXIST (that block id is already in use).
+          const meaning =
+            err === 2 ? 'ENOENT — a variable in the block does not exist on this firmware'
+            : err === 7 ? 'E2BIG — block payload exceeds the 26-byte limit'
+            : err === 12 ? 'ENOMEM — the drone is out of log blocks or memory'
+            : err === 17 ? 'EEXIST — that block id is already registered on the drone'
+            : `errno ${err}`;
+          console.error(`[drone] log ${cmdName} block ${blockId} FAILED: ${meaning}`);
+        }
+        return;
+      }
+
       // Fires for every log-TOC reply -- one per log variable, and this
       // firmware has ~370 of them. Ungated, it doubled an already huge console
       // stream and slowed the TOC fetch to minutes.
@@ -764,6 +800,17 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     sendPacket(logDeleteBlockPacket(blockId));
 
     logBlocksRef.current.set(blockId, entries);
+    blocksSeenRef.current.delete(blockId);
+    // A block that is accepted but never delivers is the exact failure we hit
+    // with the range sensors: "started log block 0" in the log, then silence.
+    setTimeout(() => {
+      if (logBlocksRef.current.has(blockId) && !blocksSeenRef.current.has(blockId)) {
+        console.error(
+          `[drone] log block ${blockId} was started but has sent NO data after 4s. ` +
+          `Variables: ${entries.map((e) => e.fullName).join(', ')}`
+        );
+      }
+    }, 4000);
     console.log(`[drone] creating log block ${blockId} with ${entries.length} variables`);
     sendPacket(logCreateBlockPacket(blockId, entries));
     sendPacket(logStartBlockPacket(blockId, periodMs));
