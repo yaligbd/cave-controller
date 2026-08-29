@@ -271,6 +271,9 @@ export default function ConnectScreen() {
             // The firmware refuses takeoff on its own; this only mirrors that
             // decision so a refusal is not mistaken for the app being broken.
             const canFly = logValues.get('tele.canfly');
+            // Published by cavebat.c: 0 = something is within mission.minobst
+            // (200mm by default) of a side sensor, so takeoff is refused.
+            const clear = logValues.get('tele.clear');
             const percent = vbat !== undefined ? lipoPercent(vbat) : null;
             const batteryColor =
               percent === null
@@ -288,6 +291,19 @@ export default function ConnectScreen() {
                     {vbat !== undefined ? `${vbat.toFixed(2)}V (${Math.round(percent as number)}%)` : '—'}
                   </Text>
                 </View>
+                {clear !== undefined && (
+                  <View style={localStyles.checklistRow}>
+                    <Text style={localStyles.rowLabel}>Clear of obstacles</Text>
+                    <Text
+                      style={[
+                        localStyles.mark,
+                        { color: clear ? palette.ready : palette.fault },
+                      ]}
+                    >
+                      {clear ? 'YES' : 'NO - TOO CLOSE'}
+                    </Text>
+                  </View>
+                )}
                 {canFly !== undefined && (
                   <View style={localStyles.checklistRow}>
                     <Text style={localStyles.rowLabel}>Ready to fly</Text>
@@ -306,7 +322,9 @@ export default function ConnectScreen() {
                     ? 'waiting for data'
                     : canFly === 0
                       ? 'Battery too low to take off. The drone will refuse the request. Charge it.'
-                      : 'Live reading from the drone.'}
+                      : clear === 0
+                        ? 'Something is within 20cm of the drone. It will refuse to take off. Move it to a clearer spot.'
+                        : 'Live reading from the drone.'}
                 </Text>
               </>
             );

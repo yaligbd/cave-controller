@@ -883,6 +883,7 @@ fetchParamToc()
         'pm.vbat',
         'tele.vbat',
         'tele.canfly',
+        'tele.clear',
         'range.front',
         'range.back',
         'range.left',
