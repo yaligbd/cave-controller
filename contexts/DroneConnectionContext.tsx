@@ -847,8 +847,17 @@ fetchParamToc()
   .then(() => fetchLogToc())
   .then(() => {
     setTimeout(() => {
+      // pm.vbat is the stock battery variable and exists on any firmware.
+      // tele.vbat and tele.canfly come from cavebat.c; they are listed here
+      // because app/index.tsx reads battery from logValues.get('tele.vbat').
+      // Before this the block registered only pm./range.* names, so that
+      // lookup never resolved and Battery sat on "waiting for data" forever.
+      // startLogBlock skips names the connected firmware does not publish,
+      // so listing both schemes stays safe on stock firmware.
       startLogBlock(0, [
         'pm.vbat',
+        'tele.vbat',
+        'tele.canfly',
         'range.front',
         'range.back',
         'range.left',

@@ -261,8 +261,16 @@ export default function ConnectScreen() {
           </Text>
 
           {(() => {
-            const vbatMv = logValues.get('tele.vbat');
+            // tele.vbat is cavebat.c's copy; pm.vbat is the stock variable that
+            // exists on any firmware. Falling back means the battery still reads
+            // out if the drone is running something other than CaveBat, instead
+            // of silently showing nothing and looking broken.
+            const vbatMv = logValues.get('tele.vbat') ?? logValues.get('pm.vbat');
             const vbat = vbatMv !== undefined ? vbatMv / 1000 : undefined;
+            // Published by cavebat.c: 1 = enough battery to attempt takeoff.
+            // The firmware refuses takeoff on its own; this only mirrors that
+            // decision so a refusal is not mistaken for the app being broken.
+            const canFly = logValues.get('tele.canfly');
             const percent = vbat !== undefined ? lipoPercent(vbat) : null;
             const batteryColor =
               percent === null
@@ -280,8 +288,25 @@ export default function ConnectScreen() {
                     {vbat !== undefined ? `${vbat.toFixed(2)}V (${Math.round(percent as number)}%)` : '—'}
                   </Text>
                 </View>
+                {canFly !== undefined && (
+                  <View style={localStyles.checklistRow}>
+                    <Text style={localStyles.rowLabel}>Ready to fly</Text>
+                    <Text
+                      style={[
+                        localStyles.mark,
+                        { color: canFly ? palette.ready : palette.fault },
+                      ]}
+                    >
+                      {canFly ? 'YES' : 'NO - BATTERY LOW'}
+                    </Text>
+                  </View>
+                )}
                 <Text style={localStyles.caption}>
-                  {vbat !== undefined ? 'Live reading from tele.vbat' : 'waiting for data'}
+                  {vbat === undefined
+                    ? 'waiting for data'
+                    : canFly === 0
+                      ? 'Battery too low to take off. The drone will refuse the request. Charge it.'
+                      : 'Live reading from the drone.'}
                 </Text>
               </>
             );
