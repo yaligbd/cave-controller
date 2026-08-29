@@ -873,10 +873,18 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       }
       console.log(`[ble] mtu before=${mtuBefore} after=${connected.mtu}`);
       if (connected.mtu < 24) {
-        console.warn(
-          `[ble] MTU is ${connected.mtu}; only ${connected.mtu - 3} bytes fit per notification. ` +
-          'The drone sends 21-byte frames, so multi-fragment packets will lose one byte each ' +
-          'and TOC names will arrive corrupted.'
+        // Expected, and NOT fixable. The Crazyflie's nRF51 runs SoftDevice
+        // s130, a Bluetooth 4.1 stack that supports ATT_MTU 23 and nothing
+        // larger -- there is no bigger value to negotiate. Multi-fragment
+        // packets therefore lose one byte at each fragment boundary over BLE,
+        // which is why TOC names arrive corrupted and repairName() exists.
+        // The same drone over the Crazyradio has no such problem.
+        //
+        // Do not "fix" this by requesting a larger MTU again; it has been
+        // tried both at connect() and after, and the stack cannot grant it.
+        console.log(
+          `[ble] MTU ${connected.mtu} (nRF51/s130 maximum). Long names will arrive ` +
+          'corrupted and be repaired by name; IDs are unaffected.'
         );
       }
 

@@ -8,8 +8,14 @@ import React, { useEffect, useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-const BLOCK_ID = 1;
-const RANGE_NAMES = ['range.front', 'range.back', 'range.left', 'range.right', 'range.up', 'range.zrange'];
+// This screen does NOT start its own log block. DroneConnectionContext already
+// streams all six range variables in block 0 at 100ms from the moment it
+// connects, so the values are in logValues before this screen mounts.
+//
+// It used to create block 1 with the same six variables. Block ids are a
+// shared, drone-side namespace: block 1 is the battery/status stream, so
+// opening this screen silently replaced it and the battery reading vanished.
+// Two screens must never claim the same id.
 const NO_DETECTION_MM = 2000;
 // There is no down-facing sensor on the multiranger deck — this is the Flow
 // deck's z-ranger, reported under the same range.* log group.
@@ -24,13 +30,7 @@ function readingColor(mm: number, palette: Palette): string {
 export default function SensorsScreen() {
   const { styles, palette } = useTheme();
   const router = useRouter();
-  const { isConnected, logValues, startLogBlock, stopLogBlock, hasLogVar } = useDroneConnection();
-
-  useEffect(() => {
-    startLogBlock(BLOCK_ID, RANGE_NAMES, 100);
-    return () => stopLogBlock(BLOCK_ID);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const { isConnected, logValues, hasLogVar } = useDroneConnection();
 
   const localStyles = useMemo(() => createLocalStyles(palette), [palette]);
 
