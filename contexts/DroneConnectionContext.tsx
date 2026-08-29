@@ -356,6 +356,10 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
           : cmd === 8 ? 'start-v2' : `cmd${cmd}`;
         if (err === 0) {
           console.log(`[drone] log ${cmdName} block ${blockId}: OK`);
+        } else if (cmd === 2 && err === 2) {
+          // Deleting a block that was never created. Expected on a fresh
+          // connection, since we always delete before creating.
+          console.log(`[drone] log delete block ${blockId}: nothing to delete (fine)`);
         } else {
           // errno values from the firmware: 2 = ENOENT (no such block/variable),
           // 7 = E2BIG (block too large), 12 = ENOMEM (out of blocks/memory),
@@ -1026,14 +1030,22 @@ fetchParamToc()
 
       // Block 1, battery and mission status: 4 + 2 + 1 + 1 + 2 + 1 = 11 bytes.
       // Slower period; none of it changes fast, and it keeps the link quiet.
-      startLogBlock(1, [
-        'pm.vbat',
-        'tele.vbat',
-        'tele.canfly',
-        'tele.clear',
-        'tele.maxz',
-        'tele.endwhy'
-      ], 500);
+      // Staggered on purpose. A create for 6 variables is 21 bytes, which does
+      // not fit one 20-byte BLE notification, so it is sent as two fragments.
+      // Firing both blocks back to back put four fragments in flight at once;
+      // they interleave and the drone reassembles the wrong bytes. The symptom
+      // was one block working and the other failing with ENOENT, and WHICH one
+      // failed changed between runs.
+      setTimeout(() => {
+        startLogBlock(1, [
+          'pm.vbat',
+          'tele.vbat',
+          'tele.canfly',
+          'tele.clear',
+          'tele.maxz',
+          'tele.endwhy'
+        ], 500);
+      }, 1500);
     }, 500);
 
     if (TELE_POLLING_ENABLED) startTelemetryPolling();
