@@ -327,13 +327,18 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
 
     if (crtpPort(packet[0]) === PORT_LOG) {
       if (crtpChannel(packet[0]) === LOG_CHAN_DATA) {
-        console.log(`[log data] blockId=${packet[1]} bytes=${toHex(packet)}`);
+        if (CRTP_DEBUG) console.log(`[log data] blockId=${packet[1]} bytes=${toHex(packet)}`);
         handleLogData(packet);
         return;
       }
-      console.log(
-        `[log rx] port=5 packet NOT routed to log data handler — channel=${crtpChannel(packet[0])} (data channel is ${LOG_CHAN_DATA}), bytes=${toHex(packet)}`
-      );
+      // Fires for every log-TOC reply -- one per log variable, and this
+      // firmware has ~370 of them. Ungated, it doubled an already huge console
+      // stream and slowed the TOC fetch to minutes.
+      if (CRTP_DEBUG) {
+        console.log(
+          `[log rx] port=5 packet NOT routed to log data handler — channel=${crtpChannel(packet[0])} (data channel is ${LOG_CHAN_DATA}), bytes=${toHex(packet)}`
+        );
+      }
     }
 
     if (CRTP_DEBUG) console.log(`[crtp rx packet] ${toHex(packet)}`);
@@ -773,16 +778,36 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     setStatus('connecting');
     try {
       console.log(`Connecting to ${device.name}...`);
-      let connected = await device.connect();
+      // Ask for the larger MTU as part of connect(). On Android a standalone
+      // requestMTU() after connect() often resolves without changing anything
+      // -- observed here as "mtu before=23 after=23" with no error thrown.
+      //
+      // This matters, it is not cosmetic. ATT MTU 23 carries only 20 bytes per
+      // notification, but the drone's BLE link sends 21-byte CRTP frames (1
+      // control byte + 20 payload). The 21st byte is silently discarded by the
+      // radio, so EVERY multi-fragment packet loses exactly one byte at the
+      // fragment boundary. That is the cause of the corrupted TOC names
+      // ("chargeCurret", "stabilizer.rol") that repairName() exists to patch up.
+      let connected = await device.connect({ requestMTU: 185 });
       const mtuBefore = connected.mtu;
 
-      try {
-        connected = await connected.requestMTU(185);
-        console.log('[ble] MTU negotiated:', connected.mtu);
-      } catch (e) {
-        console.warn('[ble] requestMTU failed, continuing with default:', e);
+      // Retry explicitly after connecting, in case the connect-time request
+      // was ignored. Harmless when the MTU is already large.
+      if (connected.mtu < 24) {
+        try {
+          connected = await connected.requestMTU(185);
+        } catch (e) {
+          console.warn('[ble] requestMTU failed, continuing with default:', e);
+        }
       }
       console.log(`[ble] mtu before=${mtuBefore} after=${connected.mtu}`);
+      if (connected.mtu < 24) {
+        console.warn(
+          `[ble] MTU is ${connected.mtu}; only ${connected.mtu - 3} bytes fit per notification. ` +
+          'The drone sends 21-byte frames, so multi-fragment packets will lose one byte each ' +
+          'and TOC names will arrive corrupted.'
+        );
+      }
 
       console.log('✅ Connected! Discovering services...');
       await connected.discoverAllServicesAndCharacteristics();
@@ -822,7 +847,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
           if (!characteristic?.value) return;
 
           const packet = reassemblerRef.current.push(frame);
-          if (packet && crtpPort(packet[0]) === PORT_LOG) {
+          if (CRTP_DEBUG && packet && crtpPort(packet[0]) === PORT_LOG) {
             console.log(`[log rx] port=5 channel=${crtpChannel(packet[0])} bytes=${toHex(packet)}`);
           }
           if (packet) handlePacket(packet);
