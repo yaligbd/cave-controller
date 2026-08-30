@@ -203,7 +203,10 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // Log blocks are still accepted and then silently send nothing, and mission
   // commands are silently ignored, because nothing is running to act on them.
   // Without surfacing this, that state is indistinguishable from a bug in this
-  // app -- which is exactly how it was read for several rounds.
+  // app -- which is exactly how it was read for several rounds.
+  // Sticky across the connection, so a later unrelated console line cannot
+  // quietly clear a failure the user has not seen yet.
+  const bootFailedRef = useRef(false);
   const [selftestPassed, setSelftestPassed] = useState<boolean | null>(null);
   const [teleValues, setTeleValues] = useState<Map<string, number>>(new Map());
 
@@ -299,6 +302,36 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       text += String.fromCharCode(packet[i]);
     }
     console.log('[drone]', text);
+
+    // Read the drone's boot result out of its own console output.
+    //
+    // The earlier attempt read the system.selftestPassed PARAMETER instead,
+    // and that does not work: names arrive corrupted over BLE and are repaired
+    // against a table, and a long name like that one does not survive. Its
+    // absence was reported as "missing from the TOC", so the check never ran.
+    //
+    // The console text is not name-dependent, and these two lines are printed
+    // by the stock firmware on every boot, so this works regardless of which
+    // CaveBat build is flashed. Matching is loose because BLE drops one byte
+    // per fragment boundary: "Self test passed!" can arrive as "Self test
+    // pased!", and "[FAIL]" has been seen intact but is checked with the
+    // surrounding text kept short for the same reason.
+    // Match on [FAIL] alone. Anchoring on surrounding words does not survive
+    // the byte loss: 'Deck 1 test [FAIL]' arrives as 'Deck 1 est [FAIL]'.
+    // No line in a healthy boot contains [FAIL], so this is specific enough.
+    if (text.includes('[FAIL]')) {
+      bootFailedRef.current = true;
+      setSelftestPassed(false);
+      console.error(
+        '[drone] BOOT SELF-TEST FAILED — the drone reported: "' + text.trim() + '". ' +
+        'When this happens the firmware never starts: no flying, no live data, ' +
+        'and every command is ignored. Nothing this app sends will have any effect.'
+      );
+    } else if (/Self test pa?sed/i.test(text)) {
+      bootFailedRef.current = false;
+      setSelftestPassed(true);
+      console.log('[drone] boot self-test passed');
+    }
   };
 
   const PORT_LINKCTRL = 15;
@@ -646,32 +679,6 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       return parsed ? parsed.value : null;
     } catch {
       return null;
-    }
-  };
-
-  // system.selftestPassed is a read-only parameter, not a log variable, so it
-  // has to be fetched with a param read rather than streamed.
-  const readSelftest = async () => {
-    const entry = paramsRef.current.get('system.selftestPassed');
-    if (!entry) {
-      console.warn('[drone] system.selftestPassed missing from the TOC — cannot check boot state');
-      return;
-    }
-    const value = await readTeleParam(entry);
-    if (value === null) {
-      console.warn('[drone] could not read system.selftestPassed');
-      return;
-    }
-    const ok = value !== 0;
-    setSelftestPassed(ok);
-    if (ok) {
-      console.log('[drone] self-test passed — the drone booted normally');
-    } else {
-      console.error(
-        '[drone] SELF-TEST FAILED on this boot. The firmware never started, so ' +
-        'the drone will not fly and will not stream data, no matter what this ' +
-        'app sends. Power-cycle the drone and check its boot output.'
-      );
     }
   };
 
@@ -1053,9 +1060,6 @@ fetchParamToc()
       // lookup never resolved and Battery sat on "waiting for data" forever.
       // startLogBlock skips names the connected firmware does not publish,
       // so listing both schemes stays safe on stock firmware.
-      // Ask the drone whether it actually booted, before anything else.
-      readSelftest();
-
       // ONE block, five variables, on purpose. Do not add a sixth.
       //
       // A create packet is 3 + 3*N bytes. At five variables that is 18 bytes,
