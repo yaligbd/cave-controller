@@ -1,6 +1,7 @@
 import Header from '@/components/Header';
 import SimulatorWebView from '@/components/SimulatorWebView';
 import FlightCard from '@/components/flightCard';
+import FlightDataModal from '@/components/FlightDataModal';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Flight } from '@/types/flightT';
@@ -27,6 +28,9 @@ export default function SimulatorScreen() {
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [draftName, setDraftName] = useState('');
+  // Which flight's raw measurements to show. Tapping a card opens this, so the
+  // data is readable while the 3D view is still being built.
+  const [dataFlight, setDataFlight] = useState<StoredFlight | null>(null);
 
   // Reload on every focus, so a flight downloaded on another screen appears
   // here without needing the app restarted.
@@ -169,7 +173,14 @@ export default function SimulatorScreen() {
               </View>
             ) : (
               <>
-                <FlightCard flight={flight} onPress={() => setSelectedFlight(flight)} />
+                <FlightCard
+                  flight={flight}
+                  selected={selectedFlight?.id === flight.id}
+                  onPress={() => {
+                    setSelectedFlight(flight);
+                    setDataFlight(flight);
+                  }}
+                />
                 <View style={localStyles.flightActions}>
                   <TouchableOpacity
                     style={localStyles.smallBtn}
@@ -186,6 +197,8 @@ export default function SimulatorScreen() {
           </View>
         ))}
       </ScrollView>
+
+      <FlightDataModal flight={dataFlight} onClose={() => setDataFlight(null)} />
     </SafeAreaProvider>
   );
 }
