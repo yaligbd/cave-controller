@@ -2,7 +2,7 @@
 
 Expo / React Native app that controls a Bitcraze Crazyflie 2.x fitted with a Flow deck v2
 and a Multi-ranger deck. The drone runs custom firmware and flies autonomously; the phone
-only starts the mission and downloads the log afterwards. It is not a live remote control.
+starts the mission and collects the flight data. It is not a live remote control.
 
 ## Intended flight flow
 
@@ -12,46 +12,74 @@ only starts the mission and downloads the log afterwards. It is not a live remot
 4. Phone sends a timer.
 5. Drone flies autonomously — no phone link required in the air.
 6. Drone returns and lands.
-7. Phone downloads the recorded flight log over BLE.
-8. App renders the path in 3D.
+7. Phone collects the flight and renders the path in 3D.
+
+**Where this actually stands:** steps 1–6 work. Step 7 currently records on the PHONE
+while it stays connected (`startFlightRecording` in `DroneConnectionContext`), because the
+drone does not yet store a flight itself. The onboard store-and-forward exists in
+`cavebat_v3.c` in the firmware repo but flipped the drone on takeoff and is not in use.
+The sample format is identical either way, so moving recording onboard will not change the
+3D view or the flight cards.
+
+## Hard limits learned the expensive way — do not rediscover these
+
+**A log block create packet must fit ONE 20-byte BLE notification.** It is `3 + 3*N` bytes,
+so **five variables maximum**. Six is 21 bytes, gets split across two notifications, and
+split packets arrive corrupted — the drone then echoes back a command that was never sent.
+
+**Never create two log blocks back to back.** Their fragments interleave and whichever
+block loses the race is silently destroyed, with no error anywhere. Stagger them (~1.5s).
+
+**A log block's data payload is capped at 26 bytes** (`LOG_MAX_LEN` in the firmware). An
+over-limit block is rejected outright and streams *nothing* — not a truncated subset.
+
+**`LOG_CTRL_DELETE_BLOCK` is 2, not 5.** Command 5 is RESET, which erases every block on
+the drone. This was wrong for a long time and made "delete one block" wipe them all.
+
+**The BLE MTU cannot be raised.** The nRF51 runs SoftDevice s130, whose ATT_MTU is fixed at
+23 (20 usable bytes). Every multi-fragment packet therefore loses one byte at the fragment
+boundary, which is why TOC names arrive corrupted and `repairName()` exists. Requests for a
+larger MTU silently no-op. **Do not spend time on this again.**
+
+**Read the drone's replies.** It answers every log control command with `[cmd, blockId,
+errorCode]`. Ignoring those made a rejected block indistinguishable from a working one.
+Most real bugs here were found by making the drone report on itself, not by reasoning.
 
 ## Transport facts (Bitcraze BLE spec — do not change these)
 
 - Service `00000201-1c7f-4f9e-947b-43b7c00a9a08`
-- `0x0202` CRTP: simple, 20-byte limited. **We do not use it.**
 - `0x0203` CRTPUP: uplink. First byte is a control byte, the rest is raw CRTP data.
 - `0x0204` CRTPDOWN: downlink, notify only, same format.
 - Control byte: bit 7 = Start, bits 5-6 = PID, bits 0-4 = Length.
-- Packets longer than 19 bytes are written twice; the second write has Start=0, Length=0,
-  and the same PID.
 - `react-native-ble-plx` transfers base64 strings, not byte arrays.
 
-## Key design decision: look parameters up by name
+## Parameters are looked up by name, and the catalogue is cached
 
-Crazyflie parameters are addressed by a numeric ID that the firmware assigns across the
-whole build. **Hardcoding IDs is a bug.** We download the parameter TOC on connect and
-look parameters up by name, e.g. `"mission.state"`.
+Crazyflie parameters are addressed by a numeric ID the firmware assigns per build, so
+hardcoding IDs is a bug. The catalogue is fetched once and cached to disk under the drone's
+own CRC (`services/TocCache.ts`); connection went from 4–5 minutes to seconds. A reflash
+that changes the catalogue misses the cache and refetches rather than returning stale IDs.
 
 ## Layout
 
 - `services/CrtpService.ts` — the authority on all byte-level encoding: base64, CRTP
-  headers, BLE fragmentation/reassembly, param TOC parsing, param writes. It contains no
-  Bluetooth code by design. Do not duplicate its logic anywhere else.
-- `services/OtaService.ts` — over-the-air flashing experiment; not part of the intended flow.
-- `contexts/DroneConnectionContext.tsx` — BLE scan / connect / disconnect, React context.
-- `app/` — expo-router screens: `index` (log download + 3D view), `mission` (pre-flight
-  checklist and start), `tuning`, `setup`, `history`, `settings`.
-- `components/`, `constants/theme.ts`, `hooks/`, `data/` (demo flight fixtures), `types/`.
-- `server/` — separate scratch Node project, unrelated to the app.
+  headers, BLE fragmentation/reassembly, TOC parsing, param writes. No Bluetooth code by
+  design. Do not duplicate its logic anywhere else.
+- `services/TocCache.ts` — disk cache for the parameter and log catalogues.
+- `services/FlightStore.ts` — saved flights, one JSON file each. `buildFlight()` converts
+  raw drone samples into the shape the 3D view reads.
+- `contexts/DroneConnectionContext.tsx` — BLE scan/connect, log blocks, telemetry, and the
+  phone-side flight recorder.
+- `app/` — expo-router screens: `index` (connect + hardware checklist), `mission`,
+  `simulator` (3D view, flight cards, measurements table), `sensors`, `settings`.
+- `components/FlightDataModal.tsx` — every recorded sample as a table, for developing the
+  3D view without flying repeatedly.
 
-## Status
+## Known issues
 
-Firmware is not written yet; the drone currently runs stock firmware, so nothing end-to-end
-has flown. Known-wrong code that predates the decisions above:
-
-- `DroneConnectionContext` exports `CRAZYFLIE_RX` pointing at `0x0202`, the characteristic
-  we do not use.
-- `app/mission.tsx` and `app/tuning.tsx` hardcode parameter IDs and go through the
-  `CrtpService` compatibility shim at the bottom of the file. Both screens need rewriting
-  against the TOC lookup.
-- `app/index.tsx` fakes the log download with a hardcoded path and a `setTimeout`.
+- **Range sensor streaming to the sensors screen is off.** Deferred, not broken.
+- **The Flow deck needs visible floor texture.** On plain wood the position estimate
+  diverges and the drone flips on takeoff. On a patterned surface (towels) it flies fine.
+  This is the single biggest cause of bad flights and bad data.
+- `app/sensors.tsx` shows dashes rather than stale values, on purpose.
+- `services/OtaService.ts` is an unused experiment.
