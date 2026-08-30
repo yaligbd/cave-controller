@@ -1,5 +1,13 @@
 import React, { createContext, useContext, useRef, useState } from 'react';
 import { loadToc, saveToc } from '@/services/TocCache';
+import {
+  bulkClearPacket,
+  bulkDumpPacket,
+  parseBulkEof,
+  parseBulkSample,
+  PORT_BULK,
+  type BulkSample,
+} from '@/services/CrtpService';
 import { buildFlight, saveFlight, type RawSample } from '@/services/FlightStore';
 import { LOG_BLOCK_MAX_BYTES, LOG_TYPE_SIZE } from '@/services/CrtpService';
 import { PermissionsAndroid, Platform } from 'react-native';
@@ -184,6 +192,10 @@ interface DroneContextType {
   startFlightRecording: () => void;
   /** Saves and returns the sample count; 0 if nothing worth keeping. */
   stopFlightRecording: (name: string) => Promise<number>;
+  /** Downloads the drone's own recording and saves it. Returns samples saved. */
+  downloadFlightFromDrone: (name: string) => Promise<number>;
+  /** Tells the drone to discard its recording. */
+  clearDroneRecording: () => void;
   startLogBlock: (blockId: number, names: string[], periodMs: number) => void;
   stopLogBlock: (blockId: number) => void;
   hasLogVar: (name: string) => boolean;
@@ -216,6 +228,14 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // Sticky across the connection, so a later unrelated console line cannot
   // quietly clear a failure the user has not seen yet.
   const bootFailedRef = useRef(false);
+
+  // Receives flight-download packets while a download is running. A ref rather
+  // than state because packets arrive far faster than React would re-render,
+  // and the handler must see the current collector, not a captured one.
+  const bulkCollectorRef = useRef<{
+    onSample: (s: BulkSample) => void;
+    onDone: (count: number) => void;
+  } | null>(null);
 
   // --- Flight recording, phone side -------------------------------------
   // The drone does not yet store a flight itself, so while the app is
@@ -460,6 +480,23 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       }
       console.log(`[crtp rx port15 ascii] ${ascii}`);
     }
+    // Flight download. Only meaningful while a download is in progress; at any
+    // other time these cannot arrive, because the drone only sends them when
+    // asked.
+    if (crtpPort(packet[0]) === PORT_BULK) {
+      const collector = bulkCollectorRef.current;
+      if (collector) {
+        const eofCount = parseBulkEof(packet);
+        if (eofCount !== null) {
+          collector.onDone(eofCount);
+          return;
+        }
+        const sample = parseBulkSample(packet);
+        if (sample) collector.onSample(sample);
+      }
+      return;
+    }
+
     if (crtpPort(packet[0]) === PORT_CONSOLE) {
       lastConsolePacketAtRef.current = Date.now();
       logConsolePacket(packet);
@@ -754,6 +791,95 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     const ok = await saveFlight(flight);
     console.log(`[flight] ${ok ? 'saved' : 'FAILED to save'} "${name}", ${samples.length} samples`);
     return ok ? samples.length : 0;
+  };
+
+  /**
+   * Asks the drone for the flight it recorded, and saves it.
+   *
+   * Returns the number of samples saved, or 0 if nothing usable arrived.
+   *
+   * The drone's memory is deliberately NOT cleared here. If clearing were
+   * automatic and the save then failed, the flight would be gone with no way
+   * to ask again -- the drone is the only copy until this succeeds. Clearing
+   * is a separate, explicit call.
+   */
+  const downloadFlightFromDrone = async (name: string): Promise<number> => {
+    if (!deviceRef.current) {
+      console.warn('[download] not connected');
+      return 0;
+    }
+
+    const samples: BulkSample[] = [];
+    let finished = false;
+
+    const done = new Promise<number>((resolve) => {
+      let idleTimer: ReturnType<typeof setTimeout>;
+
+      const finish = (count: number) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(idleTimer);
+        bulkCollectorRef.current = null;
+        resolve(count);
+      };
+
+      // Idle timeout rather than one overall deadline: a long flight is a lot
+      // of packets and a fixed budget would cut it short, but a genuinely
+      // stalled transfer stops producing packets entirely. Reset on every
+      // packet, so this only fires when the drone has actually gone quiet.
+      const bump = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          console.warn(`[download] no packet for 3s, stopping with ${samples.length} samples`);
+          finish(samples.length);
+        }, 3000);
+      };
+
+      bulkCollectorRef.current = {
+        onSample: (s) => { samples.push(s); bump(); },
+        onDone: (count) => {
+          if (count !== samples.length) {
+            console.warn(
+              `[download] drone said ${count} samples, ${samples.length} arrived — ` +
+              'some packets were lost in transit'
+            );
+          }
+          finish(samples.length);
+        },
+      };
+      bump();
+    });
+
+    console.log('[download] requesting the flight from the drone');
+    sendPacket(bulkDumpPacket());
+    const count = await done;
+
+    if (count < 3) {
+      console.warn(`[download] only ${count} samples, not saving`);
+      return 0;
+    }
+
+    // Order by the drone's own index, not arrival order. BLE does not
+    // guarantee ordering, and one swapped pair would put a kink in the path.
+    samples.sort((a, b) => a.index - b.index);
+
+    const flight = buildFlight(
+      samples.map((s) => ({
+        x: s.x, y: s.y, z: s.z,
+        front: s.front, back: s.back, left: s.left, right: s.right,
+        up: s.up, down: s.down,
+      })),
+      name
+    );
+    const ok = await saveFlight(flight);
+    console.log(`[download] ${ok ? 'saved' : 'FAILED to save'} "${name}", ${count} samples`);
+    return ok ? count : 0;
+  };
+
+  /** Tells the drone to discard its recording. Only once a download is safely saved. */
+  const clearDroneRecording = () => {
+    console.log('[download] clearing the drone recording');
+    sendPacket(bulkClearPacket());
   };
 
   const runTelemetryCycle = async () => {
@@ -1172,7 +1298,12 @@ fetchParamToc()
       setTimeout(() => {
         startLogBlock(2, [
           'tele.canfly',
-          'tele.clear'
+          'tele.clear',
+          // How many samples the drone is holding. Lets the app say whether
+          // there is anything to download instead of running a transfer that
+          // returns nothing. Absent on firmware without onboard recording, and
+          // startLogBlock skips names the drone does not publish.
+          'tele.samples'
         ], 1000);
       }, 3000);
     }, 500);
@@ -1296,6 +1427,8 @@ fetchParamToc()
         isRecording,
         startFlightRecording,
         stopFlightRecording,
+        downloadFlightFromDrone,
+        clearDroneRecording,
         startLogBlock,
         stopLogBlock,
         hasLogVar,

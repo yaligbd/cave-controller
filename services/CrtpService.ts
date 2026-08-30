@@ -734,3 +734,77 @@ export const CrtpService = {
     );
   },
 };
+
+// ---------------------------------------------------------------------------
+// Flight-recording download, CRTP port 14
+//
+// Must match cavebat_record.c / cavebat_wall.c exactly. The firmware sends one
+// sample per packet, each 1 header + 2 index + 12 payload = 15 bytes, which
+// fits a single 20-byte BLE notification. Do not grow the sample past 16 bytes
+// or the packets fragment, and fragments arrive corrupted on this hardware.
+// ---------------------------------------------------------------------------
+
+export const PORT_BULK = 14;
+export const BULK_CHAN_CTRL = 0;
+export const BULK_CHAN_DATA = 1;
+
+export const BULK_CMD_DUMP_START = 0x01;   // app -> drone: send the recording
+export const BULK_CMD_CLEAR_MEM = 0x02;    // app -> drone: discard it
+export const BULK_CMD_EOF = 0xff;          // drone -> app: that was the last
+
+/** One recorded measurement, decoded. Distances in MILLIMETRES, 0 = no reading. */
+export interface BulkSample {
+  index: number;
+  x: number;
+  y: number;
+  z: number;
+  front: number;
+  back: number;
+  left: number;
+  right: number;
+  up: number;
+  down: number;
+}
+
+export function bulkDumpPacket(): Uint8Array {
+  return new Uint8Array([crtpHeader(PORT_BULK, BULK_CHAN_CTRL), BULK_CMD_DUMP_START]);
+}
+
+export function bulkClearPacket(): Uint8Array {
+  return new Uint8Array([crtpHeader(PORT_BULK, BULK_CHAN_CTRL), BULK_CMD_CLEAR_MEM]);
+}
+
+/**
+ * Decodes one sample packet, or null if it is not one.
+ *
+ * The firmware stores ranges as single bytes in 2cm units to keep the packet
+ * inside one BLE notification, so they are scaled back to millimetres here.
+ * 0 stays 0 and keeps meaning "nothing in range" rather than "a wall at zero".
+ */
+export function parseBulkSample(pkt: Uint8Array): BulkSample | null {
+  if (crtpPort(pkt[0]) !== PORT_BULK || crtpChannel(pkt[0]) !== BULK_CHAN_DATA) return null;
+  if (pkt.length < 15) return null;
+
+  const dv = new DataView(pkt.buffer, pkt.byteOffset, pkt.length);
+  const cm2 = (v: number) => (v === 0 ? 0 : v * 20);
+
+  return {
+    index: pkt[1] | (pkt[2] << 8),
+    x: dv.getInt16(3, true),
+    y: dv.getInt16(5, true),
+    z: dv.getInt16(7, true),
+    front: cm2(pkt[9]),
+    back: cm2(pkt[10]),
+    left: cm2(pkt[11]),
+    right: cm2(pkt[12]),
+    up: cm2(pkt[13]),
+    down: cm2(pkt[14]),
+  };
+}
+
+/** Returns the sample count the drone claims it sent, or null if not an EOF. */
+export function parseBulkEof(pkt: Uint8Array): number | null {
+  if (crtpPort(pkt[0]) !== PORT_BULK || crtpChannel(pkt[0]) !== BULK_CHAN_CTRL) return null;
+  if (pkt.length < 4 || pkt[1] !== BULK_CMD_EOF) return null;
+  return pkt[2] | (pkt[3] << 8);
+}

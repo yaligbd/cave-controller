@@ -19,7 +19,7 @@ import { useDroneConnection } from '@/contexts/DroneConnectionContext';
 
 export default function SimulatorScreen() {
   const { styles, palette } = useTheme();
-  const { logValues, isConnected } = useDroneConnection();
+  const { logValues, isConnected, downloadFlightFromDrone, clearDroneRecording} = useDroneConnection();
   // Real flights downloaded from the drone. The demo fixtures are gone: they
   // made an empty app look populated, so "no flights yet" was indistinguishable
   // from "the download is broken".
@@ -31,6 +31,39 @@ export default function SimulatorScreen() {
   // Which flight's raw measurements to show. Tapping a card opens this, so the
   // data is readable while the 3D view is still being built.
   const [dataFlight, setDataFlight] = useState<StoredFlight | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  // How many samples the drone says it is holding. 0 means there is nothing to
+  // fetch, so the button can say so instead of running a pointless transfer.
+  const droneSamples = logValues.get('tele.samples');
+
+  const onDownload = async () => {
+    setDownloading(true);
+    try {
+      const name = `Drone flight ${new Date().toLocaleString()}`;
+      const n = await downloadFlightFromDrone(name);
+      if (n > 0) {
+        reload();
+        Alert.alert(
+          'Flight downloaded',
+          `${n} samples came from the drone's own memory.
+
+Clear the drone's copy now?`,
+          [
+            { text: 'Keep it', style: 'cancel' },
+            { text: 'Clear', onPress: clearDroneRecording },
+          ]
+        );
+      } else {
+        Alert.alert(
+          'Nothing downloaded',
+          'The drone did not send a usable flight. It may not have recorded one yet.'
+        );
+      }
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   // Reload on every focus, so a flight downloaded on another screen appears
   // here without needing the app restarted.
@@ -139,6 +172,24 @@ export default function SimulatorScreen() {
             </>
           )}
         </View>
+
+        {/* Pull the flight the DRONE recorded, as opposed to the copy the phone
+            made while watching. This is the real store-and-forward path. */}
+        {!isLiveMode && isConnected && (
+          <TouchableOpacity
+            style={[localStyles.downloadBtn, downloading && { opacity: 0.5 }]}
+            onPress={onDownload}
+            disabled={downloading}
+          >
+            <Text style={localStyles.downloadText}>
+              {downloading
+                ? 'DOWNLOADING…'
+                : droneSamples
+                  ? `DOWNLOAD FLIGHT FROM DRONE (${droneSamples} samples)`
+                  : 'DOWNLOAD FLIGHT FROM DRONE'}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* Saved flights. Real ones only -- see the note on the flights state. */}
         {!isLiveMode && flights.length === 0 && (
@@ -269,6 +320,22 @@ function createLocalStyles(palette: Palette) {
       color: palette.textSecondary,
       fontSize: type.sm,
       textAlign: 'center',
+    },
+    downloadBtn: {
+      borderWidth: 1,
+      borderColor: palette.accent,
+      backgroundColor: alpha(palette.accent, 0.12),
+      borderRadius: radius.sm,
+      paddingVertical: spacing.md,
+      alignItems: 'center',
+      marginBottom: spacing.md,
+    },
+    downloadText: {
+      fontFamily: type.fontFamily,
+      color: palette.accent,
+      fontSize: type.sm,
+      fontWeight: 'bold',
+      letterSpacing: 1,
     },
     flightRow: {
       marginBottom: spacing.md,
