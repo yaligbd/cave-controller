@@ -142,8 +142,7 @@ export default function ConnectScreen() {
     disconnectFromDrone,
     findParam,
     runCrtpProbe,
-    logValues,
-  } = useDroneConnection();
+    logValues, selftestPassed} = useDroneConnection();
 
   const fetching = tocProgress.total > 0 && tocProgress.loaded < tocProgress.total;
   const tocDone = params.size > 0 && !fetching;
@@ -257,8 +256,31 @@ export default function ConnectScreen() {
           })}
           <Text style={localStyles.caption}>
             A checkmark means the parameter is compiled into the firmware, not that the deck has been confirmed
-            physically attached.
+            physically attached. The self-test line below is the drone's own verdict.
           </Text>
+
+          {/* The drone's boot self-test. When this fails the firmware never
+              starts: no flying, no live data, and every command is silently
+              ignored. That is indistinguishable from an app bug unless it is
+              stated plainly, so it gets its own banner rather than a tick. */}
+          {selftestPassed === false && (
+            <View style={[localStyles.selftestBanner, { borderColor: palette.fault }]}>
+              <Text style={[localStyles.selftestTitle, { color: palette.fault }]}>
+                DRONE SELF-TEST FAILED
+              </Text>
+              <Text style={localStyles.caption}>
+                The drone did not finish booting, so its firmware is not running. It will not fly and
+                will not send live data, whatever this app sends it. Power-cycle the drone and watch
+                its boot output for the failing line.
+              </Text>
+            </View>
+          )}
+          {selftestPassed === true && (
+            <View style={localStyles.checklistRow}>
+              <Text style={localStyles.rowLabel}>Drone self-test</Text>
+              <Text style={[localStyles.mark, { color: palette.ready }]}>PASSED</Text>
+            </View>
+          )}
 
           {(() => {
             // tele.vbat is cavebat.c's copy; pm.vbat is the stock variable that
@@ -408,7 +430,21 @@ function createLocalStyles(palette: Palette) {
       fontWeight: 'bold',
       letterSpacing: 2,
       textTransform: 'uppercase',
-    },
+    },
+  selftestBanner: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  selftestTitle: {
+    fontFamily: type.fontFamily,
+    fontSize: type.md,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+    marginBottom: spacing.xs,
+  },
     checklistRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',

@@ -176,6 +176,8 @@ interface DroneContextType {
   logVars: Map<string, LogEntry>;
   logTocProgress: TocProgress;
   logValues: Map<string, number>;
+  /** Drone's boot self-test: null = unknown, false = FAILED and it will not fly. */
+  selftestPassed: boolean | null;
   startLogBlock: (blockId: number, names: string[], periodMs: number) => void;
   stopLogBlock: (blockId: number) => void;
   hasLogVar: (name: string) => boolean;
@@ -193,6 +195,16 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   const [logVars, setLogVars] = useState<Map<string, LogEntry>>(new Map());
   const [logTocProgress, setLogTocProgress] = useState<TocProgress>({ loaded: 0, total: 0 });
   const [logValues, setLogValues] = useState<Map<string, number>>(new Map());
+  // The drone's own boot self-test result, read once per connection.
+  // null = not read yet, true = booted normally, false = self-test FAILED.
+  //
+  // This matters more than it looks. When the self-test fails the firmware
+  // never calls systemStart(): no stabilizer, no log streaming, no app layer.
+  // Log blocks are still accepted and then silently send nothing, and mission
+  // commands are silently ignored, because nothing is running to act on them.
+  // Without surfacing this, that state is indistinguishable from a bug in this
+  // app -- which is exactly how it was read for several rounds.
+  const [selftestPassed, setSelftestPassed] = useState<boolean | null>(null);
   const [teleValues, setTeleValues] = useState<Map<string, number>>(new Map());
 
   // Every stage of the connect flow goes through here so the UI always has
@@ -637,6 +649,32 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     }
   };
 
+  // system.selftestPassed is a read-only parameter, not a log variable, so it
+  // has to be fetched with a param read rather than streamed.
+  const readSelftest = async () => {
+    const entry = paramsRef.current.get('system.selftestPassed');
+    if (!entry) {
+      console.warn('[drone] system.selftestPassed missing from the TOC — cannot check boot state');
+      return;
+    }
+    const value = await readTeleParam(entry);
+    if (value === null) {
+      console.warn('[drone] could not read system.selftestPassed');
+      return;
+    }
+    const ok = value !== 0;
+    setSelftestPassed(ok);
+    if (ok) {
+      console.log('[drone] self-test passed — the drone booted normally');
+    } else {
+      console.error(
+        '[drone] SELF-TEST FAILED on this boot. The firmware never started, so ' +
+        'the drone will not fly and will not stream data, no matter what this ' +
+        'app sends. Power-cycle the drone and check its boot output.'
+      );
+    }
+  };
+
   const runTelemetryCycle = async () => {
     if (!teleActiveRef.current) return;
 
@@ -898,6 +936,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     setLogVars(new Map());
     setLogTocProgress({ loaded: 0, total: 0 });
     setLogValues(new Map());
+    setSelftestPassed(null);
     logBlocksRef.current = new Map();
   };
 
@@ -1014,6 +1053,9 @@ fetchParamToc()
       // lookup never resolved and Battery sat on "waiting for data" forever.
       // startLogBlock skips names the connected firmware does not publish,
       // so listing both schemes stays safe on stock firmware.
+      // Ask the drone whether it actually booted, before anything else.
+      readSelftest();
+
       // ONE block, five variables, on purpose. Do not add a sixth.
       //
       // A create packet is 3 + 3*N bytes. At five variables that is 18 bytes,
@@ -1156,6 +1198,7 @@ fetchParamToc()
         logVars,
         logTocProgress,
         logValues,
+        selftestPassed,
         startLogBlock,
         stopLogBlock,
         hasLogVar,
