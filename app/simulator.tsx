@@ -3,18 +3,65 @@ import SimulatorWebView from '@/components/SimulatorWebView';
 import FlightCard from '@/components/flightCard';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
-import { demoFlights } from '@/data/demoFlights';
 import { Flight } from '@/types/flightT';
-import React, { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import {
+  deleteFlight,
+  listFlights,
+  renameFlight,
+  type StoredFlight,
+} from '@/services/FlightStore';
+import React, { useCallback, useMemo, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 import { useDroneConnection } from '@/contexts/DroneConnectionContext';
 
 export default function SimulatorScreen() {
   const { styles, palette } = useTheme();
   const { logValues, isConnected } = useDroneConnection();
-  const [selectedFlight, setSelectedFlight] = useState<Flight>(demoFlights[0]);
+  // Real flights downloaded from the drone. The demo fixtures are gone: they
+  // made an empty app look populated, so "no flights yet" was indistinguishable
+  // from "the download is broken".
+  const [flights, setFlights] = useState<StoredFlight[]>([]);
+  const [selectedFlight, setSelectedFlight] = useState<StoredFlight | null>(null);
   const [isLiveMode, setIsLiveMode] = useState(false);
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [draftName, setDraftName] = useState('');
+
+  // Reload on every focus, so a flight downloaded on another screen appears
+  // here without needing the app restarted.
+  const reload = useCallback(() => {
+    listFlights().then((list) => {
+      setFlights(list);
+      setSelectedFlight((cur) => {
+        if (cur) {
+          const still = list.find((f) => f.id === cur.id);
+          if (still) return still;
+        }
+        return list[0] ?? null;
+      });
+    });
+  }, []);
+  useFocusEffect(useCallback(() => { reload(); }, [reload]));
+
+  const onRename = async (f: StoredFlight) => {
+    const name = draftName.trim();
+    setRenamingId(null);
+    if (!name || name === f.name) return;
+    await renameFlight(f.id, name);
+    reload();
+  };
+
+  const onDelete = (f: StoredFlight) => {
+    Alert.alert('Delete flight', `Delete "${f.name}"? This cannot be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => { await deleteFlight(f.id); reload(); },
+      },
+    ]);
+  };
 
   const localStyles = useMemo(() => createLocalStyles(palette), [palette]);
 
@@ -42,15 +89,25 @@ export default function SimulatorScreen() {
         <View style={localStyles.simulatorContainer}>
           {isLiveMode ? (
             <SimulatorWebView livePoint={livePoint} />
-          ) : (
+          ) : selectedFlight ? (
             <SimulatorWebView flightData={selectedFlight.flightPath} />
+          ) : (
+            <View style={localStyles.emptyViewer}>
+              <Text style={localStyles.emptyTitle}>No flights yet</Text>
+              <Text style={localStyles.emptyText}>
+                Fly a mission, then download it from the drone. It will appear
+                here as a card you can rename or delete.
+              </Text>
+            </View>
           )}
         </View>
 
         {/* 2. Dashboard explicitly right under the hologram */}
         <View style={localStyles.detailCard}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <Text style={localStyles.detailTitle}>{isLiveMode ? 'Live Flight Mode' : selectedFlight.name}</Text>
+            <Text style={localStyles.detailTitle}>
+              {isLiveMode ? 'Live Flight Mode' : (selectedFlight?.name ?? 'No flight selected')}
+            </Text>
             <TouchableOpacity 
               style={[localStyles.liveModeBtn, isLiveMode && localStyles.liveModeBtnActive]}
               onPress={() => setIsLiveMode(!isLiveMode)}
@@ -60,13 +117,16 @@ export default function SimulatorScreen() {
           </View>
           
           {!isLiveMode ? (
-            <>
-              <Text style={localStyles.detailRow}>Duration: {selectedFlight.duration} s</Text>
-              <Text style={localStyles.detailRow}>Max Altitude: {selectedFlight.maxAltitude} m</Text>
-              <Text style={localStyles.detailRow}>Distance: {selectedFlight.distance} m</Text>
-              <Text style={localStyles.detailRow}>Battery Usage: {selectedFlight.batteryUsage} %</Text>
-              <Text style={localStyles.detailRow}>Samples: {selectedFlight.flightPath.time.length}</Text>
-            </>
+            selectedFlight ? (
+              <>
+                <Text style={localStyles.detailRow}>Duration: {selectedFlight.duration} s</Text>
+                <Text style={localStyles.detailRow}>Max Altitude: {selectedFlight.maxAltitude} m</Text>
+                <Text style={localStyles.detailRow}>Distance: {selectedFlight.distance} m</Text>
+                <Text style={localStyles.detailRow}>Samples: {selectedFlight.flightPath.time.length}</Text>
+              </>
+            ) : (
+              <Text style={localStyles.detailRow}>Nothing downloaded yet.</Text>
+            )
           ) : (
             <>
               <Text style={localStyles.detailRow}>Connected: {isConnected ? 'Yes' : 'No'}</Text>
@@ -76,18 +136,54 @@ export default function SimulatorScreen() {
           )}
         </View>
 
-        {/* 3. Demo warning banner */}
-        {!isLiveMode && (
+        {/* Saved flights. Real ones only -- see the note on the flights state. */}
+        {!isLiveMode && flights.length === 0 && (
           <View style={localStyles.banner}>
             <Text style={localStyles.bannerText}>
-              Demo data. Real flights require the log download, which is not implemented yet.
+              No saved flights. Fly a mission and download it from the drone.
             </Text>
           </View>
         )}
 
-        {/* 4. Selectable Flight List at the bottom */}
-        {!isLiveMode && demoFlights.map((flight) => (
-          <FlightCard key={flight.id} flight={flight} onPress={() => setSelectedFlight(flight)} />
+        {!isLiveMode && flights.map((flight) => (
+          <View key={flight.id} style={localStyles.flightRow}>
+            {renamingId === flight.id ? (
+              <View style={localStyles.renameBox}>
+                <TextInput
+                  style={localStyles.renameInput}
+                  value={draftName}
+                  onChangeText={setDraftName}
+                  autoFocus
+                  selectTextOnFocus
+                  placeholder="Flight name"
+                  placeholderTextColor={palette.textMuted}
+                  onSubmitEditing={() => onRename(flight)}
+                  returnKeyType="done"
+                />
+                <TouchableOpacity style={localStyles.smallBtn} onPress={() => onRename(flight)}>
+                  <Text style={[localStyles.smallBtnText, { color: palette.ready }]}>SAVE</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={localStyles.smallBtn} onPress={() => setRenamingId(null)}>
+                  <Text style={localStyles.smallBtnText}>CANCEL</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                <FlightCard flight={flight} onPress={() => setSelectedFlight(flight)} />
+                <View style={localStyles.flightActions}>
+                  <TouchableOpacity
+                    style={localStyles.smallBtn}
+                    onPress={() => { setDraftName(flight.name); setRenamingId(flight.id); }}
+                  >
+                    <Text style={localStyles.smallBtnText}>RENAME</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={localStyles.smallBtn} onPress={() => onDelete(flight)}>
+                    <Text style={[localStyles.smallBtnText, { color: palette.fault }]}>DELETE</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
         ))}
       </ScrollView>
     </SafeAreaProvider>
@@ -142,9 +238,72 @@ function createLocalStyles(palette: Palette) {
       fontSize: type.xs,
       fontWeight: '600',
     },
+    emptyViewer: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: spacing.lg,
+    },
+    emptyTitle: {
+      fontFamily: type.fontFamily,
+      color: palette.textPrimary,
+      fontSize: type.lg,
+      fontWeight: 'bold',
+      marginBottom: spacing.sm,
+    },
+    emptyText: {
+      fontFamily: type.fontFamily,
+      color: palette.textSecondary,
+      fontSize: type.sm,
+      textAlign: 'center',
+    },
+    flightRow: {
+      marginBottom: spacing.md,
+    },
+    flightActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: spacing.sm,
+      marginTop: spacing.xs,
+    },
+    renameBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      backgroundColor: palette.surface,
+      borderWidth: 1,
+      borderColor: palette.border,
+      borderRadius: radius.sm,
+      padding: spacing.md,
+    },
+    renameInput: {
+      flex: 1,
+      fontFamily: type.fontFamily,
+      color: palette.textPrimary,
+      fontSize: type.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: palette.border,
+      paddingVertical: 4,
+    },
+    smallBtn: {
+      borderWidth: 1,
+      borderColor: palette.border,
+      borderRadius: radius.sm,
+      paddingVertical: 4,
+      paddingHorizontal: 10,
+    },
+    smallBtnText: {
+      fontFamily: type.fontFamily,
+      color: palette.textSecondary,
+      fontSize: type.xs,
+      fontWeight: 'bold',
+    },
     liveModeBtn: {
-      backgroundColor: alpha(palette.primary, 0.2),
-      borderColor: palette.primary,
+      // palette.primary does not exist -- see the Palette interface in
+      // constants/theme.ts. It resolved to undefined, so this button had no
+      // background or border colour at all. accent is the intended one.
+      backgroundColor: alpha(palette.accent, 0.2),
+      borderColor: palette.accent,
       borderWidth: 1,
       borderRadius: radius.sm,
       paddingVertical: 4,

@@ -1,0 +1,159 @@
+// Persistent storage for flights downloaded from the drone.
+//
+// One JSON file per flight under documentDirectory/flights/. A file per flight
+// rather than one big list, so renaming or deleting one flight cannot corrupt
+// the others, and a single unreadable file loses one flight instead of all of
+// them.
+//
+// Everything here fails soft. A storage problem must degrade to "this flight is
+// missing" and never to a crash mid-flight-download, because the drone's copy
+// is cleared once the transfer completes and there is no second chance to ask.
+
+import * as FileSystem from 'expo-file-system/legacy';
+import type { Flight, FlightData } from '@/types/flightT';
+
+const dir = () => `${FileSystem.documentDirectory}flights/`;
+const fileFor = (id: string) => `${dir()}${id}.json`;
+
+/** One measurement as the drone records it: position in mm, walls in mm. */
+export interface RawSample {
+  x: number;
+  y: number;
+  z: number;
+  front: number;
+  back: number;
+  left: number;
+  right: number;
+}
+
+/** A stored flight. Extends the existing Flight shape the 3D view already reads. */
+export interface StoredFlight extends Flight {
+  /** Milliseconds since epoch, for ordering newest-first. */
+  savedAt: number;
+  /** Kept so a flight can be re-derived if the display format ever changes. */
+  samples: RawSample[];
+}
+
+async function ensureDir(): Promise<void> {
+  const info = await FileSystem.getInfoAsync(dir());
+  if (!info.exists) {
+    await FileSystem.makeDirectoryAsync(dir(), { intermediates: true });
+  }
+}
+
+/**
+ * Turns the drone's raw samples into the shape the 3D view and the summary
+ * rows already expect.
+ *
+ * The drone works in millimetres and the display in metres, and it records once
+ * per second, so sample index IS the time in seconds.
+ */
+export function buildFlight(
+  samples: RawSample[],
+  name: string,
+  batteryUsage = 0
+): StoredFlight {
+  const mm = (v: number) => v / 1000;
+
+  const flightPath: FlightData = {
+    frontSensor: samples.map((s) => mm(s.front)),
+    backSensor: samples.map((s) => mm(s.back)),
+    leftSensor: samples.map((s) => mm(s.left)),
+    rightSensor: samples.map((s) => mm(s.right)),
+    // The drone does not record up/down distance or attitude yet. Zero-filled
+    // to the same length so anything iterating these arrays in step stays
+    // aligned rather than running off the end.
+    downSensor: samples.map((s) => mm(s.z)),
+    TopSensor: samples.map(() => 0),
+    yaw: samples.map(() => 0),
+    pitch: samples.map(() => 0),
+    roll: samples.map(() => 0),
+    time: samples.map((_, i) => i),
+  };
+
+  const maxAltitude = samples.length
+    ? Math.max(...samples.map((s) => mm(s.z)))
+    : 0;
+
+  // Path length: straight-line distance between consecutive points. Understates
+  // a curved path slightly, which is the honest direction to be wrong in.
+  let distance = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const dx = mm(samples[i].x - samples[i - 1].x);
+    const dy = mm(samples[i].y - samples[i - 1].y);
+    const dz = mm(samples[i].z - samples[i - 1].z);
+    distance += Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  return {
+    id: Date.now(),
+    name,
+    duration: samples.length,        // one sample per second
+    maxAltitude: Number(maxAltitude.toFixed(2)),
+    distance: Number(distance.toFixed(2)),
+    batteryUsage,
+    flightPath,
+    video: '',
+    savedAt: Date.now(),
+    samples,
+  };
+}
+
+/** Newest first. Returns [] on any problem rather than throwing. */
+export async function listFlights(): Promise<StoredFlight[]> {
+  try {
+    await ensureDir();
+    const names = await FileSystem.readDirectoryAsync(dir());
+    const out: StoredFlight[] = [];
+    for (const n of names) {
+      if (!n.endsWith('.json')) continue;
+      try {
+        const raw = await FileSystem.readAsStringAsync(`${dir()}${n}`);
+        const f = JSON.parse(raw) as StoredFlight;
+        if (f && typeof f.name === 'string' && f.flightPath) out.push(f);
+      } catch {
+        // One corrupt file must not hide every other flight.
+        console.warn(`[flights] could not read ${n}, skipping`);
+      }
+    }
+    return out.sort((a, b) => b.savedAt - a.savedAt);
+  } catch (e) {
+    console.warn('[flights] list failed:', e);
+    return [];
+  }
+}
+
+export async function saveFlight(f: StoredFlight): Promise<boolean> {
+  try {
+    await ensureDir();
+    await FileSystem.writeAsStringAsync(fileFor(String(f.id)), JSON.stringify(f));
+    console.log(`[flights] saved "${f.name}" (${f.samples.length} samples)`);
+    return true;
+  } catch (e) {
+    console.error('[flights] SAVE FAILED:', e);
+    return false;
+  }
+}
+
+export async function renameFlight(id: number, name: string): Promise<boolean> {
+  try {
+    const raw = await FileSystem.readAsStringAsync(fileFor(String(id)));
+    const f = JSON.parse(raw) as StoredFlight;
+    f.name = name;
+    await FileSystem.writeAsStringAsync(fileFor(String(id)), JSON.stringify(f));
+    return true;
+  } catch (e) {
+    console.warn('[flights] rename failed:', e);
+    return false;
+  }
+}
+
+export async function deleteFlight(id: number): Promise<boolean> {
+  try {
+    await FileSystem.deleteAsync(fileFor(String(id)), { idempotent: true });
+    return true;
+  } catch (e) {
+    console.warn('[flights] delete failed:', e);
+    return false;
+  }
+}
