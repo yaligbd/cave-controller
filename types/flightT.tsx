@@ -20,4 +20,14 @@ export interface FlightData{
     pitch: number[]; // Array of pitch readings over time
     roll: number[]; // Array of roll readings over time
     time: number[]; // Array of time readings over time
+
+    // The drone's OWN measured position, in metres, one entry per sample.
+    //
+    // Optional because flights saved before these existed do not have them.
+    // Without them the 3D view has no choice but to invent a path -- it used
+    // to assume a constant 1.5 m/s forward along yaw, which drew a straight
+    // diagonal line regardless of what the drone actually did.
+    posX?: number[];
+    posY?: number[];
+    posZ?: number[];
 } 

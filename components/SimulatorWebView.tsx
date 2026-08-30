@@ -91,14 +91,35 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
               const t = flightData.time[i];
               const yawRad = (flightData.yaw[i] || 0) * (Math.PI / 180);
               
-              if (i > 0) {
-                const dt = t - flightData.time[i-1];
-                currentX += Math.cos(yawRad) * 1.5 * dt;
-                currentY += Math.sin(yawRad) * 1.5 * dt;
-              }
+              // Use the drone's OWN position when we have it.
+              //
+              // The fallback below dead-reckons: it assumes the drone always
+              // flies forward at 1.5 m/s along its yaw. Yaw is recorded as 0,
+              // so cos(0)=1 and it marched +1.5m in X every second -- drawing a
+              // straight 36-metre diagonal for a 24-second hover in place. Every
+              // flight looked identical and none of them looked like reality.
+              // It is kept only for flights saved before positions were stored.
+              const hasRealPos =
+                flightData.posX && flightData.posY && flightData.posZ &&
+                flightData.posX.length === length;
 
-              const heightZ = (flightData.downSensor[i] || 0);
-              const p3d = new THREE.Vector3(currentX, heightZ, currentY);
+              let p3d;
+              if (hasRealPos) {
+                // three.js is Y-up; the drone reports Z-up. So the drone's Z
+                // becomes the scene's Y, and the drone's Y becomes the scene's Z.
+                p3d = new THREE.Vector3(
+                  flightData.posX[i],
+                  flightData.posZ[i],
+                  flightData.posY[i]
+                );
+              } else {
+                if (i > 0) {
+                  const dt = t - flightData.time[i-1];
+                  currentX += Math.cos(yawRad) * 1.5 * dt;
+                  currentY += Math.sin(yawRad) * 1.5 * dt;
+                }
+                p3d = new THREE.Vector3(currentX, (flightData.downSensor[i] || 0), currentY);
+              }
               pathPoints.push(p3d);
               lastValidP3D = p3d;
 

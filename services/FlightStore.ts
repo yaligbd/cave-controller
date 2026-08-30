@@ -69,6 +69,13 @@ export function buildFlight(
     pitch: samples.map(() => 0),
     roll: samples.map(() => 0),
     time: samples.map((_, i) => i),
+
+    // The drone's real position. Without these the 3D view falls back to
+    // dead-reckoning a straight line, which is what made every flight look
+    // identical and wrong.
+    posX: samples.map((s) => mm(s.x)),
+    posY: samples.map((s) => mm(s.y)),
+    posZ: samples.map((s) => mm(s.z)),
   };
 
   const maxAltitude = samples.length
@@ -110,7 +117,17 @@ export async function listFlights(): Promise<StoredFlight[]> {
       try {
         const raw = await FileSystem.readAsStringAsync(`${dir()}${n}`);
         const f = JSON.parse(raw) as StoredFlight;
-        if (f && typeof f.name === 'string' && f.flightPath) out.push(f);
+        if (f && typeof f.name === 'string' && f.flightPath) {
+          // Backfill real position for flights saved before it was stored.
+          // The raw samples were always kept, so nothing has to be re-flown --
+          // these flights just could not be drawn correctly until now.
+          if (!f.flightPath.posX && Array.isArray(f.samples) && f.samples.length) {
+            f.flightPath.posX = f.samples.map((p) => p.x / 1000);
+            f.flightPath.posY = f.samples.map((p) => p.y / 1000);
+            f.flightPath.posZ = f.samples.map((p) => p.z / 1000);
+          }
+          out.push(f);
+        }
       } catch {
         // One corrupt file must not hide every other flight.
         console.warn(`[flights] could not read ${n}, skipping`);
