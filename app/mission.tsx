@@ -53,7 +53,7 @@ function getStatus(
 
 export default function MissionScreen() {
   const { styles, palette } = useTheme();
-  const { isConnected, bleAvailable, params, tocProgress, setParam } = useDroneConnection();
+  const { isConnected, bleAvailable, params, tocProgress, setParam, startFlightRecording, stopFlightRecording} = useDroneConnection();
 
   const [timer, setTimer] = useState(10);
   const [height, setHeight] = useState(500);
@@ -109,8 +109,39 @@ export default function MissionScreen() {
       }
 
       await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // Start recording BEFORE the mission command, so the climb is captured
+      // from the first moment rather than from wherever the drone happens to
+      // be once it is already moving.
+      startFlightRecording();
+
       await setParam('mission.state', 1);
       setFlying(true);
+
+      // Stop after the mission plus a margin for the climb and the landing.
+      // Time-based rather than watching for the drone to report itself done:
+      // the flight runs on the drone and the app is only a bystander here, and
+      // an over-long recording just adds a few still samples at the end --
+      // whereas stopping early would cut the landing off the flight path.
+      const totalMs = (timer + 10) * 1000;
+      setTimeout(async () => {
+        const name = `Flight ${new Date().toLocaleString()}`;
+        const n = await stopFlightRecording(name);
+        setFlying(false);
+        if (n > 0) {
+          Alert.alert(
+            'Flight saved',
+            `${n} samples recorded.
+
+Open the SIMULATOR screen to view it in 3D, rename it, or delete it.`
+          );
+        } else {
+          Alert.alert(
+            'Nothing recorded',
+            'No usable samples were captured. Check that the drone is connected and streaming.'
+          );
+        }
+      }, totalMs);
     } catch (error) {
       Alert.alert('Take off failed', error instanceof Error ? error.message : String(error));
     }
@@ -119,6 +150,10 @@ export default function MissionScreen() {
   const handleAbort = async () => {
     try {
       await setParam('mission.state', 2);
+      // Keep whatever was captured up to the abort -- a cut-short flight is
+      // still real data, and often the more interesting kind.
+      const n = await stopFlightRecording(`Aborted ${new Date().toLocaleString()}`);
+      if (n > 0) Alert.alert('Partial flight saved', `${n} samples kept.`);
     } catch (error) {
       Alert.alert('Abort failed', error instanceof Error ? error.message : String(error));
     } finally {

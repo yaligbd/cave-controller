@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useRef, useState } from 'react';
 import { loadToc, saveToc } from '@/services/TocCache';
+import { buildFlight, saveFlight, type RawSample } from '@/services/FlightStore';
 import { LOG_BLOCK_MAX_BYTES, LOG_TYPE_SIZE } from '@/services/CrtpService';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { BleManager, Device, State, Subscription } from 'react-native-ble-plx';
@@ -178,6 +179,11 @@ interface DroneContextType {
   logValues: Map<string, number>;
   /** Drone's boot self-test: null = unknown, false = FAILED and it will not fly. */
   selftestPassed: boolean | null;
+  /** True while the phone is sampling a flight from the live stream. */
+  isRecording: boolean;
+  startFlightRecording: () => void;
+  /** Saves and returns the sample count; 0 if nothing worth keeping. */
+  stopFlightRecording: (name: string) => Promise<number>;
   startLogBlock: (blockId: number, names: string[], periodMs: number) => void;
   stopLogBlock: (blockId: number) => void;
   hasLogVar: (name: string) => boolean;
@@ -195,6 +201,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   const [logVars, setLogVars] = useState<Map<string, LogEntry>>(new Map());
   const [logTocProgress, setLogTocProgress] = useState<TocProgress>({ loaded: 0, total: 0 });
   const [logValues, setLogValues] = useState<Map<string, number>>(new Map());
+  // Mirror of logValues for the recording interval. A setInterval closure
+  // captures state once and would record the same frozen sample forever.
+  const logValuesRef = useRef<Map<string, number>>(new Map());
   // The drone's own boot self-test result, read once per connection.
   // null = not read yet, true = booted normally, false = self-test FAILED.
   //
@@ -207,6 +216,18 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // Sticky across the connection, so a later unrelated console line cannot
   // quietly clear a failure the user has not seen yet.
   const bootFailedRef = useRef(false);
+
+  // --- Flight recording, phone side -------------------------------------
+  // The drone does not yet store a flight itself, so while the app is
+  // connected it samples the live stream once a second and saves the result
+  // as a flight. Same shape the drone will eventually hand over, so the 3D
+  // view and the flight cards do not change when recording moves onboard.
+  //
+  // Samples live in a ref, not state: this appends once a second for a whole
+  // flight, and re-rendering the tree on every sample would be pure waste.
+  const recordSamplesRef = useRef<RawSample[]>([]);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
   const [selftestPassed, setSelftestPassed] = useState<boolean | null>(null);
   const [teleValues, setTeleValues] = useState<Map<string, number>>(new Map());
 
@@ -371,6 +392,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       entries.forEach((entry, i) => {
         if (i < decoded.values.length) next.set(entry.fullName, decoded.values[i]);
       });
+      logValuesRef.current = next;
       return next;
     });
   };
@@ -682,6 +704,56 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     }
   };
 
+  /**
+   * Begin recording one sample per second from the live stream.
+   * Starting again while already recording restarts cleanly rather than
+   * appending to the previous flight.
+   */
+  const startFlightRecording = () => {
+    if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+    recordSamplesRef.current = [];
+    setIsRecording(true);
+    console.log('[flight] recording started');
+
+    recordTimerRef.current = setInterval(() => {
+      const g = (n: string) => logValuesRef.current.get(n) ?? 0;
+      recordSamplesRef.current.push({
+        x: g('tele.x'),
+        y: g('tele.y'),
+        z: g('tele.z'),
+        front: g('tele.front'),
+        back: g('tele.back'),
+        left: g('tele.left'),
+        right: g('tele.right'),
+      });
+    }, 1000);
+  };
+
+  /**
+   * Stop and save. Returns the sample count, or 0 if there was nothing worth
+   * keeping -- a flight of one or two samples is a mis-fire, not a flight, and
+   * saving it would just leave junk cards to delete.
+   */
+  const stopFlightRecording = async (name: string): Promise<number> => {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    setIsRecording(false);
+
+    const samples = recordSamplesRef.current;
+    recordSamplesRef.current = [];
+    if (samples.length < 3) {
+      console.warn(`[flight] only ${samples.length} samples, not saving`);
+      return 0;
+    }
+
+    const flight = buildFlight(samples, name);
+    const ok = await saveFlight(flight);
+    console.log(`[flight] ${ok ? 'saved' : 'FAILED to save'} "${name}", ${samples.length} samples`);
+    return ok ? samples.length : 0;
+  };
+
   const runTelemetryCycle = async () => {
     if (!teleActiveRef.current) return;
 
@@ -943,6 +1015,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     setLogVars(new Map());
     setLogTocProgress({ loaded: 0, total: 0 });
     setLogValues(new Map());
+    logValuesRef.current = new Map();
     setSelftestPassed(null);
     logBlocksRef.current = new Map();
   };
@@ -1060,31 +1133,35 @@ fetchParamToc()
       // lookup never resolved and Battery sat on "waiting for data" forever.
       // startLogBlock skips names the connected firmware does not publish,
       // so listing both schemes stays safe on stock firmware.
-      // ONE block, five variables, on purpose. Do not add a sixth.
+      // TWO blocks of FIVE. Five is a hard ceiling, not a preference: a block
+      // create packet is 3 + 3*N bytes, so five is 18 bytes and fits one
+      // 20-byte BLE notification. Six is 21 bytes, gets split across two
+      // notifications, and split packets arrive corrupted -- the drone then
+      // echoes back a command that was never sent.
       //
-      // A create packet is 3 + 3*N bytes. At five variables that is 18 bytes,
-      // which fits in a single 20-byte BLE notification. At six it becomes 21
-      // bytes and must be split across two notifications -- and split creates
-      // arrive corrupted at the drone. Proof from the device log: the reply to
-      // a six-variable "create block 1" came back as "stop block 0", i.e. the
-      // drone echoed a command byte we never sent. The following start then
-      // failed with ENOENT because no such block existed.
+      // They are also STAGGERED. Setting both up back to back put four
+      // fragments in flight at once; they interleaved and whichever block lost
+      // the race was silently destroyed.
       //
-      // Running two blocks made it worse: their fragments interleaved, so
-      // WHICH block survived changed from run to run, which is what made this
-      // so hard to pin down.
-      //
-      // The six range sensors are deliberately NOT streamed for now. They are
-      // a feature, not the project, and chasing them was blocking the mission
-      // work. Restore them later -- as their own block, created on its own,
-      // with five variables or fewer.
+      // Block 0: position and the two ranges the flight path needs most.
       startLogBlock(0, [
-        'pm.vbat',
-        'tele.vbat',
-        'tele.canfly',
-        'tele.clear',
-        'tele.maxz'
-      ], 500);
+        'tele.x',
+        'tele.y',
+        'tele.z',
+        'tele.front',
+        'tele.back'
+      ], 200);
+
+      // Block 1: the remaining ranges, battery, and the two pre-flight flags.
+      setTimeout(() => {
+        startLogBlock(1, [
+          'tele.left',
+          'tele.right',
+          'tele.vbat',
+          'tele.canfly',
+          'tele.clear'
+        ], 200);
+      }, 1500);
     }, 500);
 
     if (TELE_POLLING_ENABLED) startTelemetryPolling();
@@ -1203,6 +1280,9 @@ fetchParamToc()
         logTocProgress,
         logValues,
         selftestPassed,
+        isRecording,
+        startFlightRecording,
+        stopFlightRecording,
         startLogBlock,
         stopLogBlock,
         hasLogVar,
