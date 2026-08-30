@@ -725,6 +725,8 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
         back: g('tele.back'),
         left: g('tele.left'),
         right: g('tele.right'),
+        up: g('tele.up'),
+        down: g('tele.down'),
       });
     }, 1000);
   };
@@ -1152,16 +1154,27 @@ fetchParamToc()
         'tele.back'
       ], 200);
 
-      // Block 1: the remaining ranges, battery, and the two pre-flight flags.
+      // Block 1: the remaining side ranges plus UP and DOWN. All six range
+      // directions are now recorded, so a flight captures the space around the
+      // drone rather than only its horizontal neighbours.
       setTimeout(() => {
         startLogBlock(1, [
           'tele.left',
           'tele.right',
-          'tele.vbat',
-          'tele.canfly',
-          'tele.clear'
+          'tele.up',
+          'tele.down',
+          'tele.vbat'
         ], 200);
       }, 1500);
+
+      // Block 2: the two pre-flight flags. Slower -- neither changes fast, and
+      // it keeps the link quiet during a flight.
+      setTimeout(() => {
+        startLogBlock(2, [
+          'tele.canfly',
+          'tele.clear'
+        ], 1000);
+      }, 3000);
     }, 500);
 
     if (TELE_POLLING_ENABLED) startTelemetryPolling();

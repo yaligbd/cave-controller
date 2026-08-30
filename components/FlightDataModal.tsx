@@ -74,6 +74,8 @@ export default function FlightDataModal({ flight, onClose }: Props) {
                   <Text style={[s.cell, s.headCell]}>BACK</Text>
                   <Text style={[s.cell, s.headCell]}>LEFT</Text>
                   <Text style={[s.cell, s.headCell]}>RIGHT</Text>
+                  <Text style={[s.cell, s.headCell]}>UP</Text>
+                  <Text style={[s.cell, s.headCell]}>DOWN</Text>
                 </View>
 
                 <ScrollView style={s.body} nestedScrollEnabled>
@@ -87,6 +89,8 @@ export default function FlightDataModal({ flight, onClose }: Props) {
                       <Text style={s.cell}>{range(p.back)}</Text>
                       <Text style={s.cell}>{range(p.left)}</Text>
                       <Text style={s.cell}>{range(p.right)}</Text>
+                      <Text style={s.cell}>{p.up === undefined ? '·' : range(p.up)}</Text>
+                      <Text style={s.cell}>{p.down === undefined ? '·' : range(p.down)}</Text>
                     </View>
                   ))}
                 </ScrollView>
@@ -96,8 +100,9 @@ export default function FlightDataModal({ flight, onClose }: Props) {
 
           <Text style={s.footnote}>
             All values in metres. X/Y/Z are the drone&apos;s estimated position;
-            FRONT/BACK/LEFT/RIGHT are wall distances, and — means nothing was in
-            range.
+            FRONT/BACK/LEFT/RIGHT/UP/DOWN are wall distances; — means nothing was
+            in range, and · means the flight predates that sensor being
+            recorded.
           </Text>
         </View>
       </View>

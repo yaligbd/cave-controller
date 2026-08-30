@@ -24,6 +24,9 @@ export interface RawSample {
   back: number;
   left: number;
   right: number;
+  /** Optional: absent in flights recorded before these were captured. */
+  up?: number;
+  down?: number;
 }
 
 /** A stored flight. Extends the existing Flight shape the 3D view already reads. */
@@ -60,11 +63,11 @@ export function buildFlight(
     backSensor: samples.map((s) => mm(s.back)),
     leftSensor: samples.map((s) => mm(s.left)),
     rightSensor: samples.map((s) => mm(s.right)),
-    // The drone does not record up/down distance or attitude yet. Zero-filled
-    // to the same length so anything iterating these arrays in step stays
-    // aligned rather than running off the end.
-    downSensor: samples.map((s) => mm(s.z)),
-    TopSensor: samples.map(() => 0),
+    // The REAL down-facing range, not the estimated altitude. They differ: z
+    // is the position estimate, down is what the Flow deck's sensor actually
+    // measures. Old flights have no up/down, so fall back rather than break.
+    downSensor: samples.map((s) => mm(s.down ?? s.z)),
+    TopSensor: samples.map((s) => mm(s.up ?? 0)),
     yaw: samples.map(() => 0),
     pitch: samples.map(() => 0),
     roll: samples.map(() => 0),

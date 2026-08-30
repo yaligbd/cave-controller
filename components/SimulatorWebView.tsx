@@ -42,12 +42,48 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
       <style>
         body { margin: 0; padding: 0; overflow: hidden; background-color: #0B0E11; color: white; touch-action: none; }
         #canvas-container { width: 100vw; height: 100vh; }
+
+        /* Legend. The rays were six different colours with nothing anywhere
+           saying which was which, so the most informative part of the view was
+           unreadable. Positioned bottom-left to stay clear of the FULLSCREEN
+           button in the app's own chrome. */
+        #legend {
+          position: absolute; bottom: 10px; left: 10px;
+          font: 11px ui-monospace, Menlo, Consolas, monospace;
+          color: #C7D0D9;
+          background: rgba(11,14,17,0.78);
+          border: 1px solid #1E262E; border-radius: 6px;
+          padding: 8px 10px; line-height: 1.55;
+          pointer-events: none;
+        }
+        #legend .sw {
+          display: inline-block; width: 9px; height: 9px;
+          border-radius: 2px; margin-right: 6px; vertical-align: -1px;
+        }
+        #legend .hd { color: #7D8C9A; letter-spacing: 1px; margin-bottom: 4px; }
+        #legend .cols { display: flex; gap: 14px; }
       </style>
       <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
       <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     </head>
     <body>
       <div id="canvas-container"></div>
+      <div id="legend">
+        <div class="hd">WALL DISTANCE</div>
+        <div class="cols">
+          <div>
+            <div><span class="sw" style="background:#30d158"></span>FRONT</div>
+            <div><span class="sw" style="background:#e5484d"></span>BACK</div>
+            <div><span class="sw" style="background:#ff9f0a"></span>LEFT</div>
+          </div>
+          <div>
+            <div><span class="sw" style="background:#bf5af2"></span>RIGHT</div>
+            <div><span class="sw" style="background:#5ac8fa"></span>UP</div>
+            <div><span class="sw" style="background:#ffd60a"></span>DOWN</div>
+          </div>
+        </div>
+        <div class="hd" style="margin:6px 0 0">WHITE LINE = FLIGHT PATH</div>
+      </div>
       <script>
         try {
           const flightData = ${serializedData};
@@ -128,7 +164,11 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
                 { val: flightData.backSensor[i], dir: new THREE.Vector3(-Math.cos(yawRad), 0, -Math.sin(yawRad)), col: colors.back },
                 { val: flightData.leftSensor[i], dir: new THREE.Vector3(-Math.sin(yawRad), 0, Math.cos(yawRad)), col: colors.left },
                 { val: flightData.rightSensor[i], dir: new THREE.Vector3(Math.sin(yawRad), 0, -Math.cos(yawRad)), col: colors.right },
-                { val: flightData.TopSensor[i], dir: new THREE.Vector3(0, 1, 0), col: colors.up }
+                { val: flightData.TopSensor[i], dir: new THREE.Vector3(0, 1, 0), col: colors.up },
+                // Down was measured all along and never drawn. Without it the
+                // drone appears to float with nothing below, and the height
+                // above the actual floor is invisible.
+                { val: (flightData.downSensor || [])[i], dir: new THREE.Vector3(0, -1, 0), col: colors.down }
               ];
 
               sensorRays.forEach(ray => {
@@ -159,9 +199,39 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
             }
           }
 
-          const droneGeo = new THREE.SphereGeometry(0.3, 8, 8);
-          const droneMat = new THREE.MeshBasicMaterial({ color: 0x3A8FCC });
-          const droneMesh = new THREE.Mesh(droneGeo, droneMat);
+          // A drone, not a sphere. A ball has no orientation, so there was no
+          // way to tell which way FRONT pointed -- which made the coloured rays
+          // much harder to read than they needed to be.
+          const droneMesh = new THREE.Group();
+
+          const bodyMat  = new THREE.MeshBasicMaterial({ color: 0x3A8FCC });
+          const armMat   = new THREE.MeshBasicMaterial({ color: 0x7D8C9A });
+          const rotorMat = new THREE.MeshBasicMaterial({ color: 0xE8EDF2, transparent: true, opacity: 0.55 });
+          // The nose is the FRONT sensor's colour, so which way the drone faces
+          // is readable at a glance and matches the green ray.
+          const noseMat  = new THREE.MeshBasicMaterial({ color: colors.front });
+
+          const body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.22), bodyMat);
+          droneMesh.add(body);
+
+          const nose = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 8), noseMat);
+          nose.rotation.z = -Math.PI / 2;   // point along +X, the FRONT direction
+          nose.position.set(0.16, 0, 0);
+          droneMesh.add(nose);
+
+          // Four arms and rotors in an X, the Crazyflie's actual layout.
+          [[1,1],[1,-1],[-1,1],[-1,-1]].forEach(function (c) {
+            const ax = c[0] * 0.13, az = c[1] * 0.13;
+            const arm = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.02, 0.02), armMat);
+            arm.position.set(ax / 2, 0, az / 2);
+            arm.rotation.y = -Math.atan2(az, ax);
+            droneMesh.add(arm);
+
+            const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.012, 16), rotorMat);
+            rotor.position.set(ax, 0.03, az);
+            droneMesh.add(rotor);
+          });
+
           droneMesh.position.copy(lastValidP3D);
           scene.add(droneMesh);
           
