@@ -324,6 +324,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   const blockRecoveryRef = useRef<Map<number, number>>(new Map());
   // Block ids that have delivered at least one data packet since being started.
   const blocksSeenRef = useRef<Set<number>>(new Set());
+  // When log data last arrived. Lets the app answer "is telemetry actually
+  // flowing?" rather than assuming it is because a start command was sent.
+  const lastLogDataAtRef = useRef<number>(0);
   // Temporary diagnostic — logs at most once per block if a data packet ever
   // decodes fewer values than the block has variables (e.g. a short/truncated
   // notification), instead of flooding on every packet.
@@ -404,6 +407,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // to find why no data was arriving; remove it (or the CRTP_DEBUG-style
   // gating) once confirmed working, it will flood the console otherwise.
   const handleLogData = (packet: Uint8Array) => {
+    lastLogDataAtRef.current = Date.now();
     const blockId = packet[1];
     if (!blocksSeenRef.current.has(blockId)) {
       blocksSeenRef.current.add(blockId);
@@ -916,66 +920,112 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       await new Promise((r) => setTimeout(r, 400));
     }
 
+    // Resuming is not the same as having resumed.
+    //
+    // A START that the drone never acts on leaves telemetry silently dead, and
+    // the next flight is then recorded as a drone that never left the ground:
+    // "peak altitude was 5mm" for a flight the drone itself logged as "peak 562
+    // of 500 mm". Sending the command and hoping is what made three flights in
+    // a row unrecordable.
+    //
+    // So check that data is actually flowing again, and if it is not, rebuild
+    // the blocks outright -- which is known to work, because the ENOENT
+    // recovery does exactly that and its downloads succeed.
     const resumeLogBlocks = () => {
+      if (paused.length === 0) return;
       for (const id of paused) {
         const period = logPeriodsRef.current.get(id);
         if (period === undefined) continue;
         sendPacket(logStartBlockPacket(id, period));
       }
-      if (paused.length > 0) {
-        console.log(`[download] resumed log blocks ${paused.join(', ')}`);
-      }
+      console.log(`[download] resumed log blocks ${paused.join(', ')}`);
+
+      const resumedAt = Date.now();
+      setTimeout(() => {
+        if (lastLogDataAtRef.current >= resumedAt) return;   // flowing again
+        console.warn(
+          '[download] telemetry did not restart after the download — rebuilding the blocks'
+        );
+        for (const id of paused) {
+          const entries = logBlocksRef.current.get(id);
+          const period = logPeriodsRef.current.get(id);
+          if (!entries || period === undefined) continue;
+          sendPacket(logDeleteBlockPacket(id));
+          sendPacket(logCreateBlockPacket(id, entries));
+          sendPacket(logStartBlockPacket(id, period));
+        }
+      }, 2500);
     };
 
-    const samples: BulkSample[] = [];
-    let finished = false;
+    // One request often is not enough, and that is not the user's job to know.
+    //
+    // In the 13:41 session the first two attempts after a flight timed out and
+    // the third succeeded, with nothing changed in between; the same pattern
+    // repeated later the same session. The drone is not refusing -- its replies
+    // simply do not make it back in time on the first ask. Making a person
+    // press the button three times to find that out is a bug in the app.
+    const attemptTransfer = async (): Promise<BulkSample[]> => {
+      const samples: BulkSample[] = [];
+      let finished = false;
 
-    // Two different waits, because they are two different questions. Getting
-    // the drone to START answering can take seconds; once it is answering,
-    // packets come about 5ms apart. A single budget is either too impatient to
-    // begin or too slow to notice a transfer that died halfway.
-    const FIRST_PACKET_MS = 15000;
-    const BETWEEN_PACKETS_MS = 3000;
+      // Two different waits, because they are two different questions. Getting
+      // the drone to START answering can take seconds; once it is answering,
+      // packets come about 5ms apart. A single budget is either too impatient
+      // to begin or too slow to notice a transfer that died halfway.
+      const FIRST_PACKET_MS = 8000;
+      const BETWEEN_PACKETS_MS = 3000;
 
-    const done = new Promise<number>((resolve) => {
-      let idleTimer: ReturnType<typeof setTimeout>;
+      await new Promise<void>((resolve) => {
+        let idleTimer: ReturnType<typeof setTimeout>;
 
-      const finish = (count: number) => {
-        if (finished) return;
-        finished = true;
-        clearTimeout(idleTimer);
-        bulkCollectorRef.current = null;
-        resolve(count);
-      };
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(idleTimer);
+          bulkCollectorRef.current = null;
+          resolve();
+        };
 
-      const bump = (ms: number) => {
-        clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => {
-          console.warn(
-            `[download] nothing arrived for ${ms / 1000}s, stopping with ${samples.length} samples`
-          );
-          finish(samples.length);
-        }, ms);
-      };
+        const bump = (ms: number) => {
+          clearTimeout(idleTimer);
+          idleTimer = setTimeout(finish, ms);
+        };
 
-      bulkCollectorRef.current = {
-        onSample: (s) => { samples.push(s); bump(BETWEEN_PACKETS_MS); },
-        onDone: (count) => {
-          if (count !== samples.length) {
-            console.warn(
-              `[download] drone said ${count} samples, ${samples.length} arrived — ` +
-              'some packets were lost in transit'
-            );
-          }
-          finish(samples.length);
-        },
-      };
-      bump(FIRST_PACKET_MS);
-    });
+        bulkCollectorRef.current = {
+          onSample: (smp) => { samples.push(smp); bump(BETWEEN_PACKETS_MS); },
+          onDone: (count) => {
+            if (count !== samples.length) {
+              console.warn(
+                `[download] drone said ${count} samples, ${samples.length} arrived — ` +
+                'some packets were lost in transit'
+              );
+            }
+            finish();
+          },
+        };
+        bump(FIRST_PACKET_MS);
+      });
 
-    console.log('[download] requesting the flight from the drone');
-    sendPacket(bulkDumpPacket());
-    const count = await done;
+      return samples;
+    };
+
+    let samples: BulkSample[] = [];
+    const ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+      console.log(
+        `[download] requesting the flight from the drone (attempt ${attempt} of ${ATTEMPTS})`
+      );
+      sendPacket(bulkDumpPacket());
+      samples = await attemptTransfer();
+      if (samples.length > 0) break;
+      if (attempt < ATTEMPTS) {
+        console.warn(`[download] attempt ${attempt} brought back nothing — asking again`);
+        // A beat before re-asking. Piling a second request straight onto a link
+        // that just failed to answer the first only makes the queue longer.
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+    const count = samples.length;
 
     // Telemetry comes back whatever happened -- a failed download must not
     // leave the battery and range displays dead until the next reconnect.
