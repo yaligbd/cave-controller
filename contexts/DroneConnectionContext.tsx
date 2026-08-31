@@ -224,7 +224,8 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // Log blocks are still accepted and then silently send nothing, and mission
   // commands are silently ignored, because nothing is running to act on them.
   // Without surfacing this, that state is indistinguishable from a bug in this
-  // app -- which is exactly how it was read for several rounds.
+  // app -- which is exactly how it was read for several rounds.
+
   // Sticky across the connection, so a later unrelated console line cannot
   // quietly clear a failure the user has not seen yet.
   const bootFailedRef = useRef(false);
@@ -300,6 +301,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // The entry list a running log block was created with, keyed by blockId,
   // so incoming data packets can be decoded back into named values.
   const logBlocksRef = useRef<Map<number, LogEntry[]>>(new Map());
+  // How fast each block was asked to stream. Kept so a block that is paused
+  // for a download can be resumed at its original rate rather than guessed at.
+  const logPeriodsRef = useRef<Map<number, number>>(new Map());
   // Block ids that have delivered at least one data packet since being started.
   const blocksSeenRef = useRef<Set<number>>(new Set());
   // Temporary diagnostic — logs at most once per block if a data packet ever
@@ -809,8 +813,47 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       return 0;
     }
 
+    // Free the link before asking. This is what was actually broken.
+    //
+    // Three log blocks stream continuously at 200ms/200ms/1000ms over a BLE
+    // link carrying 20 bytes a packet. The download reply queues behind all of
+    // it, and after a flight the drone could not get a word in for more than
+    // three seconds -- so the app gave up, tore down the collector, and the 11
+    // samples that arrived a moment later were dropped on the floor. The drone
+    // was never at fault: the log showed "sending 11 samples" printed AFTER
+    // "no packet for 3s, stopping with 0 samples".
+    //
+    // Stopping a block is NOT deleting it. The definition stays on the drone,
+    // so this is a plain STOP/START pair that never goes near the create path
+    // that fragments and corrupts.
+    const paused = Array.from(logBlocksRef.current.keys());
+    for (const id of paused) sendPacket(logStopBlockPacket(id));
+    if (paused.length > 0) {
+      console.log(`[download] paused log blocks ${paused.join(', ')} to free the link`);
+      // Let what is already queued drain, or the reply just queues behind it.
+      await new Promise((r) => setTimeout(r, 400));
+    }
+
+    const resumeLogBlocks = () => {
+      for (const id of paused) {
+        const period = logPeriodsRef.current.get(id);
+        if (period === undefined) continue;
+        sendPacket(logStartBlockPacket(id, period));
+      }
+      if (paused.length > 0) {
+        console.log(`[download] resumed log blocks ${paused.join(', ')}`);
+      }
+    };
+
     const samples: BulkSample[] = [];
     let finished = false;
+
+    // Two different waits, because they are two different questions. Getting
+    // the drone to START answering can take seconds; once it is answering,
+    // packets come about 5ms apart. A single budget is either too impatient to
+    // begin or too slow to notice a transfer that died halfway.
+    const FIRST_PACKET_MS = 15000;
+    const BETWEEN_PACKETS_MS = 3000;
 
     const done = new Promise<number>((resolve) => {
       let idleTimer: ReturnType<typeof setTimeout>;
@@ -823,20 +866,18 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
         resolve(count);
       };
 
-      // Idle timeout rather than one overall deadline: a long flight is a lot
-      // of packets and a fixed budget would cut it short, but a genuinely
-      // stalled transfer stops producing packets entirely. Reset on every
-      // packet, so this only fires when the drone has actually gone quiet.
-      const bump = () => {
+      const bump = (ms: number) => {
         clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
-          console.warn(`[download] no packet for 3s, stopping with ${samples.length} samples`);
+          console.warn(
+            `[download] nothing arrived for ${ms / 1000}s, stopping with ${samples.length} samples`
+          );
           finish(samples.length);
-        }, 3000);
+        }, ms);
       };
 
       bulkCollectorRef.current = {
-        onSample: (s) => { samples.push(s); bump(); },
+        onSample: (s) => { samples.push(s); bump(BETWEEN_PACKETS_MS); },
         onDone: (count) => {
           if (count !== samples.length) {
             console.warn(
@@ -847,12 +888,16 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
           finish(samples.length);
         },
       };
-      bump();
+      bump(FIRST_PACKET_MS);
     });
 
     console.log('[download] requesting the flight from the drone');
     sendPacket(bulkDumpPacket());
     const count = await done;
+
+    // Telemetry comes back whatever happened -- a failed download must not
+    // leave the battery and range displays dead until the next reconnect.
+    resumeLogBlocks();
 
     if (count < 3) {
       console.warn(`[download] only ${count} samples, not saving`);
@@ -1054,6 +1099,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     sendPacket(logDeleteBlockPacket(blockId));
 
     logBlocksRef.current.set(blockId, entries);
+    logPeriodsRef.current.set(blockId, periodMs);
     blocksSeenRef.current.delete(blockId);
     // A block that is accepted but never delivers is the exact failure we hit
     // with the range sensors: "started log block 0" in the log, then silence.
@@ -1077,6 +1123,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     sendPacket(logStopBlockPacket(blockId));
     sendPacket(logDeleteBlockPacket(blockId));
     logBlocksRef.current.delete(blockId);
+    logPeriodsRef.current.delete(blockId);
   };
 
   // Reads logVarsRef, not the logVars state — see the comment on logVarsRef.
@@ -1146,6 +1193,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     logValuesRef.current = new Map();
     setSelftestPassed(null);
     logBlocksRef.current = new Map();
+    logPeriodsRef.current = new Map();
   };
 
   const connectToDrone = async (device: Device) => {
