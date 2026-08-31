@@ -29,7 +29,7 @@ import type { LogEntry, ParamEntry, ParamType } from './CrtpService';
 // firmware cannot wall follow.
 //
 // Bump this whenever the name repair tables in CrtpService change.
-const CACHE_FORMAT_VERSION = 2;
+const CACHE_FORMAT_VERSION = 3;
 
 const cacheDir = () => `${FileSystem.documentDirectory}toc-cache/`;
 

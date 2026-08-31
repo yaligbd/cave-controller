@@ -605,6 +605,7 @@ const KNOWN_LOG_NAMES = [
   "tele.samples",
   "tele.phase",
   "tele.outwhy",
+  "tele.yaw",
 ];
 
 export function repairLogName(raw: string): string {
@@ -777,10 +778,13 @@ export const CrtpService = {
 // ---------------------------------------------------------------------------
 // Flight-recording download, CRTP port 14
 //
-// Must match cavebat_record.c / cavebat_wall.c exactly. The firmware sends one
-// sample per packet, each 1 header + 2 index + 12 payload = 15 bytes, which
-// fits a single 20-byte BLE notification. Do not grow the sample past 16 bytes
-// or the packets fragment, and fragments arrive corrupted on this hardware.
+// Must match the FlightSample struct in cavebat_mission.c EXACTLY. The firmware
+// sends one sample per packet: 1 header + 2 index + 14 payload = 17 bytes,
+// which fits a single 20-byte BLE notification.
+//
+// Do not grow the sample past 16 bytes of payload. At 17 the packet fragments,
+// and fragments arrive corrupted on this hardware -- there is no error, just
+// wrong numbers. Two bytes of headroom remain.
 // ---------------------------------------------------------------------------
 
 export const PORT_BULK = 14;
@@ -803,6 +807,15 @@ export interface BulkSample {
   right: number;
   up: number;
   down: number;
+  /**
+   * Heading in degrees, -180..180, or undefined for a flight recorded before
+   * the drone could turn.
+   *
+   * Needed to place the ranges on a map. A front reading of 800mm is 800mm in
+   * whatever direction the drone was facing, and once it can turn, that is not
+   * the same direction twice.
+   */
+  yaw?: number;
 }
 
 export function bulkDumpPacket(): Uint8Array {
@@ -822,23 +835,48 @@ export function bulkClearPacket(): Uint8Array {
  */
 export function parseBulkSample(pkt: Uint8Array): BulkSample | null {
   if (crtpPort(pkt[0]) !== PORT_BULK || crtpChannel(pkt[0]) !== BULK_CHAN_DATA) return null;
-  if (pkt.length < 15) return null;
 
   const dv = new DataView(pkt.buffer, pkt.byteOffset, pkt.length);
   const cm2 = (v: number) => (v === 0 ? 0 : v * 20);
 
-  return {
-    index: pkt[1] | (pkt[2] << 8),
-    x: dv.getInt16(3, true),
-    y: dv.getInt16(5, true),
-    z: dv.getInt16(7, true),
-    front: cm2(pkt[9]),
-    back: cm2(pkt[10]),
-    left: cm2(pkt[11]),
-    right: cm2(pkt[12]),
-    up: cm2(pkt[13]),
-    down: cm2(pkt[14]),
-  };
+  // Both layouts are accepted, chosen by length, so a flight already sitting
+  // in a drone's memory from the previous firmware still decodes instead of
+  // being silently mangled into nonsense by a parser reading the wrong offsets.
+  //
+  //   15 bytes: header, index, x, y, z, then six ranges      (no heading)
+  //   17 bytes: header, index, x, y, z, YAW, then six ranges
+  if (pkt.length >= 17) {
+    return {
+      index: pkt[1] | (pkt[2] << 8),
+      x: dv.getInt16(3, true),
+      y: dv.getInt16(5, true),
+      z: dv.getInt16(7, true),
+      yaw: dv.getInt16(9, true),
+      front: cm2(pkt[11]),
+      back: cm2(pkt[12]),
+      left: cm2(pkt[13]),
+      right: cm2(pkt[14]),
+      up: cm2(pkt[15]),
+      down: cm2(pkt[16]),
+    };
+  }
+
+  if (pkt.length >= 15) {
+    return {
+      index: pkt[1] | (pkt[2] << 8),
+      x: dv.getInt16(3, true),
+      y: dv.getInt16(5, true),
+      z: dv.getInt16(7, true),
+      front: cm2(pkt[9]),
+      back: cm2(pkt[10]),
+      left: cm2(pkt[11]),
+      right: cm2(pkt[12]),
+      up: cm2(pkt[13]),
+      down: cm2(pkt[14]),
+    };
+  }
+
+  return null;
 }
 
 /** Returns the sample count the drone claims it sent, or null if not an EOF. */

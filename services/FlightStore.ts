@@ -27,6 +27,11 @@ export interface RawSample {
   /** Optional: absent in flights recorded before these were captured. */
   up?: number;
   down?: number;
+  /**
+   * Heading in degrees, -180..180. Absent for flights recorded before the
+   * drone could turn, where it was always zero anyway.
+   */
+  yaw?: number;
 }
 
 /** A stored flight. Extends the existing Flight shape the 3D view already reads. */
@@ -68,7 +73,15 @@ export function buildFlight(
     // measures. Old flights have no up/down, so fall back rather than break.
     downSensor: samples.map((s) => mm(s.down ?? s.z)),
     TopSensor: samples.map((s) => mm(s.up ?? 0)),
-    yaw: samples.map(() => 0),
+    // The real heading, where the flight has one.
+    //
+    // This was hardcoded to zero, which was honest while the drone could not
+    // turn and is wrong now that it can. Without it the wall distances cannot
+    // be placed: a front reading of 800mm points a different way on every
+    // sample of a flight that goes round a corner, and drawing them all as
+    // though the drone faced one direction produces a picture that looks
+    // nothing like the room it flew through.
+    yaw: samples.map((s) => s.yaw ?? 0),
     pitch: samples.map(() => 0),
     roll: samples.map(() => 0),
     time: samples.map((_, i) => i),

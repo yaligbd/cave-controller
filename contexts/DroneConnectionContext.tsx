@@ -927,6 +927,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
         right: g('tele.right'),
         up: g('tele.up'),
         down: g('tele.down'),
+        yaw: g('tele.yaw'),
       });
     }, 1000);
   };
@@ -1139,7 +1140,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       samples.map((s) => ({
         x: s.x, y: s.y, z: s.z,
         front: s.front, back: s.back, left: s.left, right: s.right,
-        up: s.up, down: s.down,
+        up: s.up, down: s.down, yaw: s.yaw,
       })),
       name
     );
@@ -1584,7 +1585,11 @@ withTocRetry(() => fetchParamToc().then(() => fetchLogToc()))
           // there is anything to download instead of running a transfer that
           // returns nothing. Absent on firmware without onboard recording, and
           // startLogBlock skips names the drone does not publish.
-          'tele.samples'
+          'tele.samples',
+          // The heading, so a phone-side recording can place its wall readings
+          // as accurately as the drone's own copy. Four variables and 6 bytes,
+          // comfortably inside both the five-variable and 26-byte limits.
+          'tele.yaw'
         ], 1000);
       }, 3000);
     }, 500);
