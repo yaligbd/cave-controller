@@ -14,12 +14,17 @@ starts the mission and collects the flight data. It is not a live remote control
 6. Drone returns and lands.
 7. Phone collects the flight and renders the path in 3D.
 
-**Where this actually stands:** steps 1–6 work. Step 7 currently records on the PHONE
-while it stays connected (`startFlightRecording` in `DroneConnectionContext`), because the
-drone does not yet store a flight itself. The onboard store-and-forward exists in
-`cavebat_v3.c` in the firmware repo but flipped the drone on takeoff and is not in use.
-The sample format is identical either way, so moving recording onboard will not change the
-3D view or the flight cards.
+**Where this actually stands:** all seven steps work. Verified 2026-08-31: the drone
+recorded a flight to its own memory, the phone reconnected afterwards and downloaded it
+(firmware `cavebat_record.c`, app tag `v8-download-works`). The phone-side recorder
+(`startFlightRecording`) still runs in parallel and is the fallback; both produce the same
+sample shape, so the 3D view and flight cards do not care which one a flight came from.
+
+**A download must pause the log blocks first.** Three blocks streaming at
+200ms/200ms/1000ms saturate a 20-byte-per-packet link, and the drone's reply cannot get
+through. The drone services the request in 100ms and sends everything in 60ms — it was
+never the slow part. Before this was understood, every post-flight download reported
+"nothing downloaded" while the data sat intact on the drone.
 
 ## Hard limits learned the expensive way — do not rediscover these
 
@@ -77,6 +82,11 @@ that changes the catalogue misses the cache and refetches rather than returning 
 
 ## Known issues
 
+- **Roughly half of takeoffs crash.** The estimator prints `ESTKALMAN: State out of
+  bounds, resetting` during the climb and the drone flies on a wrong estimate. Every
+  takeoff also sags the battery 550–600mV, and the worst sag observed was the crash. Which
+  of the two is cause and which is symptom is NOT established. This is the largest
+  remaining risk to the project.
 - **Range sensor streaming to the sensors screen is off.** Deferred, not broken.
 - **The Flow deck needs visible floor texture.** On plain wood the position estimate
   diverges and the drone flips on takeoff. On a patterned surface (towels) it flies fine.
