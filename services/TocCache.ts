@@ -21,7 +21,15 @@ import type { LogEntry, ParamEntry, ParamType } from './CrtpService';
 
 // Bump when the shape below changes, so old files are discarded rather than
 // misread. The drone's CRC cannot catch a change on our side.
-const CACHE_FORMAT_VERSION = 1;
+// Bumped to 2: version 1 caches were written before mission.wallfollow and
+// mission.walldist were in the repair list, so they hold those names in their
+// corrupted form. The cache key is (kind, count, crc) and none of those change
+// when the app's repair table does, so without this bump a drone would keep
+// loading the broken names forever and the app would keep insisting the
+// firmware cannot wall follow.
+//
+// Bump this whenever the name repair tables in CrtpService change.
+const CACHE_FORMAT_VERSION = 2;
 
 const cacheDir = () => `${FileSystem.documentDirectory}toc-cache/`;
 

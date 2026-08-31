@@ -264,12 +264,30 @@ const KNOWN_PARAM_NAMES = [
   "deck.bcUSD",
   "deck.bcDWM1000",
   "deck.bcAI",
+  // EVERY mission parameter the firmware publishes has to be listed here.
+  //
+  // A name is repaired by matching it against this list, so a name that is not
+  // here cannot be repaired -- it is stored corrupted and every lookup for it
+  // fails silently. mission.wallfollow was missing, which made the app say the
+  // firmware could not wall follow while the firmware was sitting there with
+  // the parameter registered and waiting.
+  //
+  // Long names are the ones at risk. "mission.wallfollow" is 24 bytes on the
+  // wire, so it spans two BLE fragments and loses one byte at the boundary;
+  // short names like mission.state fit in one fragment and arrive intact.
+  //
+  // WHEN YOU ADD A PARAMETER TO THE FIRMWARE, ADD IT HERE TOO, and bump
+  // CACHE_FORMAT_VERSION in TocCache.ts so already-cached corrupt names are
+  // thrown away rather than reloaded.
   "mission.state",
   "mission.timer",
   "mission.height",
-  "mission.maxtime",
   "mission.sampledist",
-  "mission.vbatmin",
+  "mission.minvbat",
+  "mission.minobst",
+  "mission.guards",
+  "mission.wallfollow",
+  "mission.walldist",
 ];
 
 // True if `short` is `full` with exactly one character removed, anywhere.
@@ -566,6 +584,27 @@ const KNOWN_LOG_NAMES = [
   "stabilizer.roll",
   "stabilizer.pitch",
   "stabilizer.yaw",
+  // CaveBat's own telemetry. Short enough that most arrive intact, but listed
+  // for the same reason as the parameters: a name that is not here cannot be
+  // repaired, and every one of these is something the app reads by name.
+  "tele.alive",
+  "tele.vbat",
+  "tele.front",
+  "tele.back",
+  "tele.left",
+  "tele.right",
+  "tele.up",
+  "tele.down",
+  "tele.x",
+  "tele.y",
+  "tele.z",
+  "tele.canfly",
+  "tele.clear",
+  "tele.maxz",
+  "tele.endwhy",
+  "tele.samples",
+  "tele.phase",
+  "tele.outwhy",
 ];
 
 export function repairLogName(raw: string): string {
