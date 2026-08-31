@@ -14,17 +14,40 @@ starts the mission and collects the flight data. It is not a live remote control
 6. Drone returns and lands.
 7. Phone collects the flight and renders the path in 3D.
 
-**Where this actually stands:** all seven steps work. Verified 2026-08-31: the drone
-recorded a flight to its own memory, the phone reconnected afterwards and downloaded it
-(firmware `cavebat_record.c`, app tag `v8-download-works`). The phone-side recorder
-(`startFlightRecording`) still runs in parallel and is the fallback; both produce the same
-sample shape, so the 3D view and flight cards do not care which one a flight came from.
+**Where this actually stands:** all seven steps work, and wall following works on top
+of them. Verified 2026-08-31: the drone took off, followed a wall, turned back at half
+the timer, retraced its own route home and landed, recording throughout, and the phone
+downloaded the flight afterwards.
 
-**A download must pause the log blocks first.** Three blocks streaming at
-200ms/200ms/1000ms saturate a 20-byte-per-packet link, and the drone's reply cannot get
-through. The drone services the request in 100ms and sends everything in 60ms — it was
-never the slow part. Before this was understood, every post-flight download reported
-"nothing downloaded" while the data sat intact on the drone.
+**THE DRONE IS CURRENTLY RUNNING FIRMWARE TAG `v11-turning`.** If the app and the drone
+ever disagree about what exists, that tag is the truth. The firmware repo has one commit
+after it -- a settle-after-turning change that was built but NEVER FLASHED, because
+testing ended before it could be flown. Do not assume it is on the aircraft.
+
+**Reliability, stated honestly.** Hover flights are reliable. Wall-following flights
+crashed roughly one time in two, and the cause was never diagnosed: no log of a
+wall-following crash was ever captured across three sessions. Downloads usually work but
+sometimes need the automatic retries. None of this is fixed.
+
+**A download must pause the log blocks first, and pump at full speed.** Three blocks
+streaming at 200ms/200ms/1000ms saturate a 20-byte-per-packet link so the drone's reply
+cannot get through, and the null packet the app sends when idle is what makes the bridge
+flush its downlink at all. The drone services a dump request in 100ms and sends
+everything in 60ms -- it was never the slow part.
+
+## Working on the app without the drone
+
+Every file that can stop the drone flying now carries a **FLIGHT-CRITICAL** header
+explaining what breaks and how it was learned. Those four are:
+
+- `services/CrtpService.ts` -- the exact bytes on the wire
+- `services/TocCache.ts` -- the name-to-ID mapping, and why the version must be bumped
+- `contexts/DroneConnectionContext.tsx` -- connection, log blocks, and the takeoff command
+- `app/mission.tsx` -- the screen that launches the drone
+
+Everything else carries a **SAFE TO CHANGE WITHOUT THE DRONE** header. The 3D view, the
+flight cards, the measurements table and the stored-flight format only read data that
+already exists, and that is where to work while the hardware is away.
 
 ## Hard limits learned the expensive way — do not rediscover these
 

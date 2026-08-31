@@ -1,3 +1,53 @@
+// ===========================================================================
+//  FLIGHT-CRITICAL FILE.  THIS SCREEN LAUNCHES THE DRONE.
+// ===========================================================================
+//
+// Pressing Take Off here writes mission.state = 1, and the drone leaves the
+// ground straight away. There is no confirmation step between the button and
+// the motors. Treat every path that reaches handleTakeOff as live.
+//
+// The drone cannot be tested against right now. Assume any change here is
+// unverifiable until it is back.
+//
+// WHAT THIS SCREEN SENDS, AND WHY THE ORDER MATTERS
+//
+//   mission.timer       how long the flight lasts, in seconds
+//   mission.height      hover altitude, in mm
+//   mission.sampledist  recording spacing
+//   mission.wallfollow  0 = hover in place, 1 = seek and follow a wall
+//   mission.state = 1   GO. Everything above must already be set.
+//
+// The settings are written BEFORE the state, and the state is written last on
+// purpose. Reordering this launches the drone on whatever settings happened to
+// be left over from the previous mission.
+//
+// mission.wallfollow IS WRITTEN ON EVERY TAKEOFF, INCLUDING WHEN IT IS OFF.
+// The firmware defaults it to 0, but a mission earlier in the same power cycle
+// may have left it at 1. A drone that goes wall following when the pilot asked
+// for a hover is the worse of the two ways to be wrong, so it is always sent
+// explicitly. Do not "optimise" that into only sending it when enabled.
+//
+// The recorder is started BEFORE mission.state, so the climb is captured from
+// the first moment rather than from wherever the drone has already got to.
+//
+// THE ABORT BUTTON IS REAL SAFETY EQUIPMENT.
+// It writes mission.state = 2 and the drone lands where it is. It has been
+// tested in flight and it works. Do not put anything in front of it -- no
+// confirmation dialog, no disabled state, no debounce that could swallow the
+// press. It needs to work on the first tap while something is going wrong.
+//
+// FLIGHT MODE
+// HOVER climbs, holds for the timer, lands. FOLLOW WALL seeks a wall on the
+// drone's RIGHT, follows it for half the timer, then retraces its own route
+// home. If the connected firmware has no mission.wallfollow, choosing FOLLOW
+// WALL refuses to take off and says so -- flying a silent hover instead is the
+// exact failure that guard was added for, and it cost a flight to find.
+//
+// The setup text under the control is not decoration. Wall on the right, about
+// 40cm, nose along it. Wrong placement is the difference between a flight and
+// a crash, and there is no way for the app to check it.
+// ===========================================================================
+
 import Header from '@/components/Header';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import React, { useMemo, useState } from 'react';

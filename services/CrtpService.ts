@@ -1,3 +1,65 @@
+// ===========================================================================
+//  FLIGHT-CRITICAL FILE.  READ THIS BEFORE CHANGING ANYTHING BELOW.
+// ===========================================================================
+//
+// This file decides the exact bytes that go to the drone. A wrong byte here
+// does not throw an error and does not fail a type check -- the drone simply
+// does something other than what was meant, or goes quiet, and the cause looks
+// like broken hardware. Nearly every hard bug in this project lived in this
+// file, and none of them announced themselves.
+//
+// The drone cannot be tested against right now. Assume any change here is
+// unverifiable until it is back.
+//
+// THE RULES BELOW WERE EACH LEARNED BY LOSING A DAY TO THEM.
+//
+// 1. A LOG BLOCK MAY HAVE AT MOST FIVE VARIABLES.
+//    The create packet is 3 + 3*N bytes and must fit ONE 20-byte BLE
+//    notification. Six variables is 21 bytes, splits across two, and the
+//    fragments arrive corrupted -- the drone then acts on a command nobody
+//    sent. It once echoed back "stop block 0" in reply to "create block 1".
+//
+// 2. A LOG BLOCK'S DATA PAYLOAD IS CAPPED AT 26 BYTES (LOG_BLOCK_MAX_BYTES).
+//    Over the cap the drone rejects the block outright and streams NOTHING --
+//    not a truncated subset, nothing at all, with no error. That is exactly how
+//    the battery display silently never worked: the block asked for 32 bytes.
+//
+// 3. LOG_CTRL_DELETE_BLOCK IS 2. COMMAND 5 IS RESET-ALL.
+//    This was wrong for a long time, so "delete one block" wiped every block on
+//    the drone, and creating block 1 destroyed block 0. The range sensors were
+//    permanently silent and nothing said why.
+//
+// 4. THE BLE MTU IS 23 AND CANNOT BE RAISED. DO NOT TRY.
+//    The nRF51 runs SoftDevice s130, whose ATT_MTU is fixed. Requests for more
+//    silently no-op. This is why every multi-fragment packet loses one byte at
+//    the boundary, why TOC names arrive damaged, and why repairName() exists.
+//    Time has been spent on this twice. There is nothing to find.
+//
+// 5. EVERY FIRMWARE PARAMETER NAME MUST BE IN KNOWN_PARAM_NAMES.
+//    Names are repaired by matching against that list. A name that is not on it
+//    cannot be repaired, so it is stored corrupted and every lookup for it
+//    returns false forever, silently. "mission.wallfollow" was missing and the
+//    app spent an evening insisting the firmware could not wall follow while
+//    the firmware sat there with the parameter registered.
+//    ADD THE NAME HERE **AND** BUMP CACHE_FORMAT_VERSION IN TocCache.ts.
+//
+// 6. parseBulkSample() MUST MATCH THE FlightSample STRUCT IN THE FIRMWARE,
+//    FIELD FOR FIELD AND OFFSET FOR OFFSET.
+//    It currently reads the 17-byte layout (with heading) and falls back to the
+//    old 15-byte one by length. Get an offset wrong and every downloaded flight
+//    decodes into plausible-looking nonsense, with no error anywhere. The whole
+//    packet must stay at or under 19 bytes so it fits one notification.
+//
+// 7. READ THE DRONE'S REPLIES.
+//    It answers every log control command with [cmd, blockId, errorCode].
+//    Ignoring those made a rejected block indistinguishable from a working one.
+//    Most real bugs here were found by making the drone report on itself, not
+//    by reasoning about the code.
+//
+// SAFE TO CHANGE: nothing in this file is cosmetic. If a change is not about
+// the protocol itself, it probably belongs somewhere else.
+// ===========================================================================
+
 // services/CrtpService.ts
 // CRTP protocol encoding/decoding for the Crazyflie over BLE.
 // No Bluetooth code lives here on purpose — this is pure byte manipulation.

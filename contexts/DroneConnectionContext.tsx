@@ -1,3 +1,66 @@
+// ===========================================================================
+//  FLIGHT-CRITICAL FILE.  READ THIS BEFORE CHANGING ANYTHING BELOW.
+// ===========================================================================
+//
+// This file connects to the drone, sets up telemetry, and is the thing that
+// actually sends the command that makes it take off. A mistake here can leave
+// the drone unreachable, flying blind, or flying when it should not be.
+//
+// The drone cannot be tested against right now. Assume any change here is
+// unverifiable until it is back.
+//
+// THE THREE THINGS MOST LIKELY TO BREAK FLYING
+//
+// 1. THE LOG BLOCKS ARE STAGGERED ON PURPOSE (500ms, 1500ms, 3000ms).
+//    NEVER create two log blocks back to back. Their fragments interleave and
+//    whichever block loses the race is silently destroyed -- the drone answers
+//    "start block 0: OK" and then sends nothing at all.
+//    This rule was written down and then broken by the block-recovery code,
+//    which rebuilt all three at once. The result was a repair loop that fed
+//    itself: blocks vanished, recovery destroyed them again rebuilding them,
+//    telemetry died, and flights were recorded as 1mm of altitude while the
+//    drone was in the air reporting a 568mm climb. rebuildLogBlocks() exists to
+//    hold that line -- ONE block at a time, 1500ms apart, one rebuild at once.
+//    Do not "simplify" it into a loop.
+//
+// 2. THE NULL PACKET IS NOT IDLE CHATTER.
+//    When the send queue is empty the pump sends a null packet, and that is
+//    what makes the nRF51 bridge flush its DOWNLINK buffer. It is how the
+//    drone's replies reach the phone at all.
+//    Slowing it from 10ms to 60ms once cut the reply rate by six: three-byte
+//    log acknowledgements started taking twenty seconds, every download timed
+//    out, and all the answers then arrived together in a burst. That is why
+//    downloadActiveRef exists -- the pump runs flat out for the whole of a
+//    download and idles only when nothing is expected. Do not slow the pump
+//    down to "reduce congestion". That theory was tested and it was wrong.
+//
+// 3. setParam('mission.state', 1) TAKES OFF. IMMEDIATELY.
+//    There is no confirmation and no second step. Anything that can reach that
+//    call must be certain the drone is on the ground and the pilot meant it.
+//    mission.state = 2 aborts and lands.
+//
+// ALSO WORTH KNOWING
+//
+// - waitForConsoleQuiet() observes for 2.5s before believing the link is quiet.
+//   Silence BEFORE the boot log looks identical to silence after it, and the
+//   short version dived in during the boot and timed out the catalogue fetch on
+//   every single power cycle. Do not shorten it.
+//
+// - A download pauses the log blocks and MUST restart them. resumeLogBlocks()
+//   then checks that data actually resumed, because a START the drone never
+//   acted on leaves telemetry silently dead and the next flight records zeros.
+//
+// - stopFlightRecording() discards a recording whose peak altitude is under
+//   100mm. That is not over-caution: the recorder runs on a fixed window and
+//   has no idea whether the drone ever left the ground, and it was saving
+//   flights that never happened. Do not remove the check to "keep more data".
+//
+// SAFE TO CHANGE ELSEWHERE: FlightStore.ts, FlightDataModal.tsx,
+// flightCard.tsx, SimulatorWebView.tsx, and the screens other than mission.tsx
+// only read data that already exists. Nothing in them can stop the drone
+// flying, so that is where to work while the drone is unavailable.
+// ===========================================================================
+
 import React, { createContext, useContext, useRef, useState } from 'react';
 import { loadToc, saveToc } from '@/services/TocCache';
 import {

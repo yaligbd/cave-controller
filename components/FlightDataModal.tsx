@@ -1,3 +1,36 @@
+// ===========================================================================
+//  SAFE TO CHANGE WITHOUT THE DRONE.
+// ===========================================================================
+//
+// This file only reads flight data that has already been recorded and saved.
+// Nothing here can stop the drone flying, send it a command, or corrupt what
+// it stores. Break it and the worst case is a screen that looks wrong.
+//
+// This is the right place to work while the drone is unavailable. The 3D view,
+// the flight cards, the measurements table and the summary numbers can all be
+// developed against flights already on the phone.
+//
+// Two things it is worth knowing about the data itself:
+//
+//   Positions (posX/posY/posZ) are the drone's own estimate in metres. They are
+//   real. An older version dead-reckoned a fake straight line here, which made
+//   every flight look identical; if a path ever looks suspiciously tidy, check
+//   that the real positions are actually present rather than being fallen back
+//   from.
+//
+//   yaw is the heading in degrees and it is what places the wall readings. A
+//   front reading of 800mm is 800mm in whatever direction the drone was facing,
+//   and once it can turn that is not the same direction twice. yaw was
+//   hardcoded to zero for a long time, which drew every wall of every flight as
+//   though the drone never turned -- the path was right and the room around it
+//   was fiction. Flights recorded before that fix have yaw 0 throughout and
+//   will always look flat; that is the recording, not the renderer.
+//
+// The files that CAN stop the drone flying are marked FLIGHT-CRITICAL at the
+// top: services/CrtpService.ts, services/TocCache.ts,
+// contexts/DroneConnectionContext.tsx and app/mission.tsx.
+// ===========================================================================
+
 import { Palette, radius, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import type { StoredFlight } from '@/services/FlightStore';

@@ -1,3 +1,43 @@
+// ===========================================================================
+//  FLIGHT-CRITICAL FILE.  A STALE CACHE HERE MAKES THE DRONE IGNORE THE APP.
+// ===========================================================================
+//
+// This caches the drone's parameter and log catalogues -- the mapping from a
+// name like "mission.state" to the numeric ID the firmware actually answers to.
+// If that mapping is wrong, commands go to the wrong parameter or nowhere, and
+// nothing reports an error.
+//
+// The drone cannot be tested against right now. Assume any change here is
+// unverifiable until it is back.
+//
+// THE ONE RULE
+//
+//   BUMP CACHE_FORMAT_VERSION WHENEVER THE NAME REPAIR TABLES IN
+//   CrtpService.ts CHANGE.
+//
+// The cache is keyed on (kind, count, crc) -- all properties of the DRONE.
+// None of them change when the APP's repair table changes. So after fixing a
+// corrupted name in CrtpService, the cache written before the fix still holds
+// the broken version, and the app reloads it forever.
+//
+// That is not hypothetical. mission.wallfollow was cached corrupted, and after
+// the repair table was fixed the app still could not see the parameter, still
+// insisted the firmware could not wall follow, and the only thing that cleared
+// it was bumping this number. It is one line and it costs one slow reconnect.
+//
+// WHY THE CACHE EXISTS AT ALL
+//
+// Walking the catalogue takes 335 round trips for parameters and 544 for log
+// variables, at roughly a second each over BLE. Connection time went from four
+// or five minutes to seconds when this was added. Removing it would make the
+// app feel broken.
+//
+// EXPECT ONE SLOW CONNECTION after any firmware flash that adds or removes a
+// parameter, or after bumping the version here. That is the cache doing its
+// job, not a fault. Tell the user to wait rather than pressing scan again --
+// restarting throws away the progress and begins the whole walk over.
+// ===========================================================================
+
 // Disk cache for the drone's parameter and log catalogues (its "TOCs").
 //
 // Why this exists
