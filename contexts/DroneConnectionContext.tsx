@@ -322,6 +322,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   const logPeriodsRef = useRef<Map<number, number>>(new Map());
   // How many times each block has been rebuilt after vanishing from the drone.
   const blockRecoveryRef = useRef<Map<number, number>>(new Map());
+  // True while a download is running, so the packet pump knows to work at full
+  // speed instead of idling.
+  const downloadActiveRef = useRef(false);
   // Block ids that have delivered at least one data packet since being started.
   const blocksSeenRef = useRef<Set<number>>(new Set());
   // When log data last arrived. Lets the app answer "is telemetry actually
@@ -654,7 +657,23 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     const packet = queued ?? NULL_PACKET;
     // Pace by what was actually sent: back-to-back when there is real traffic
     // to move, unhurried when we are only keeping the bridge alive.
-    const nextDelay = queued === undefined ? POLL_IDLE_DELAY_MS : POLL_DELAY_MS;
+    // I had this wrong, and the last session's log shows the cost.
+    //
+    // The null packet is not idle chatter -- it is what makes the nRF51 bridge
+    // flush its DOWNLINK buffer. Slowing it from 10ms to 60ms to reduce
+    // congestion cut the rate at which the drone's replies could reach the
+    // phone by six. Replies that used to be three seconds late became twenty
+    // seconds late: all three download attempts timed out, and then all three
+    // answers arrived together afterwards, along with log acknowledgements
+    // that had been waiting just as long.
+    //
+    // So the pump idles gently when nothing is expected, and runs flat out
+    // while a download is in flight -- which is precisely when there is a
+    // backlog to pull down.
+    const nextDelay =
+      (queued !== undefined || downloadActiveRef.current)
+        ? POLL_DELAY_MS
+        : POLL_IDLE_DELAY_MS;
     pollSentCountRef.current += 1;
 
     // Timeout-wrapped: a write that never settles must not be able to wedge
@@ -732,13 +751,52 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // to blow past a short request timeout. Wait for it to go quiet first.
   const waitForConsoleQuiet = async () => {
     const QUIET_WINDOW_MS = 500;
-    const MAX_WAIT_MS = 10000;
+    const MAX_WAIT_MS = 12000;
+    // Watch for at least this long before believing the silence.
+    //
+    // The old version asked "has a console packet arrived in the last 500ms?"
+    // and on a freshly booted drone the answer is no -- because the boot log
+    // has not STARTED yet. So it declared the link quiet, requested the
+    // catalogue, and the entire boot log then landed on top of the request and
+    // timed it out. That is why the first connection after every power cycle
+    // failed and the second worked: by the second the drone had finished
+    // talking.
+    //
+    // Silence before the noise looks identical to silence after it. Only time
+    // tells them apart.
+    const MIN_OBSERVE_MS = 2500;
     const start = Date.now();
-    while (Date.now() - lastConsolePacketAtRef.current < QUIET_WINDOW_MS) {
-      if (Date.now() - start >= MAX_WAIT_MS) break;
+    for (;;) {
+      const waited = Date.now() - start;
+      if (waited >= MAX_WAIT_MS) break;
+      const quiet = Date.now() - lastConsolePacketAtRef.current >= QUIET_WINDOW_MS;
+      if (quiet && waited >= MIN_OBSERVE_MS) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     console.log('[crtp] console quiet, requesting TOC');
+  };
+
+  // Runs the catalogue fetch, and tries again if it fails.
+  //
+  // Each attempt starts from scratch, which is safe: a partial fetch is
+  // discarded rather than cached, and both fetchers are idempotent.
+  const withTocRetry = async (fetchAll: () => Promise<void>): Promise<void> => {
+    const ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+      try {
+        await fetchAll();
+        return;
+      } catch (error) {
+        if (attempt === ATTEMPTS) throw error;
+        console.warn(
+          `[drone] catalogue fetch failed (attempt ${attempt} of ${ATTEMPTS}), retrying: ` +
+          (error instanceof Error ? error.message : String(error))
+        );
+        // Give the link a moment. Re-asking instantly just queues a second
+        // request behind whatever swamped the first.
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    }
   };
 
   const fetchParamToc = async () => {
@@ -952,6 +1010,12 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     // Stopping a block is NOT deleting it. The definition stays on the drone,
     // so this is a plain STOP/START pair that never goes near the create path
     // that fragments and corrupts.
+    // Full-speed pumping for the duration. Pausing the log blocks frees the
+    // drone's side of the link; this frees ours. Doing only the first, as the
+    // previous version did, quietened the link and then left nothing running
+    // fast enough to empty it.
+    downloadActiveRef.current = true;
+
     const paused = Array.from(logBlocksRef.current.keys());
     for (const id of paused) sendPacket(logStopBlockPacket(id));
     if (paused.length > 0) {
@@ -1059,6 +1123,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
 
     // Telemetry comes back whatever happened -- a failed download must not
     // leave the battery and range displays dead until the next reconnect.
+    downloadActiveRef.current = false;
     resumeLogBlocks();
 
     if (count < 3) {
@@ -1460,8 +1525,14 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       console.log('🚀 DRONE IS FULLY CONNECTED AND READY!');
 
       setStatus('fetching-toc');
-fetchParamToc()
-  .then(() => fetchLogToc())
+// Retry rather than give up.
+//
+// Whatever makes the first fetch fail -- a boot log that arrived late, a
+// congested link, a slow moment -- is transient, and the proof is that
+// pressing SCAN again has always worked. Doing that automatically is the
+// difference between a drone that is awkward to connect to and one that just
+// connects.
+withTocRetry(() => fetchParamToc().then(() => fetchLogToc()))
   .then(() => {
     setTimeout(() => {
       // pm.vbat is the stock battery variable and exists on any firmware.
