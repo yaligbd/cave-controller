@@ -83,6 +83,22 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
 // null byte just to keep the bridge flushing its downlink buffer.
 const NULL_PACKET = new Uint8Array([0xff]);
 const POLL_DELAY_MS = 10;
+// How long to wait before sending ANOTHER null packet when there is nothing
+// real to send.
+//
+// The pump sent a null packet every 10ms whenever the queue was empty -- about
+// a hundred uplink writes a second, forever. On a link with 20 usable bytes a
+// packet that starves the downlink, and the log shows it getting worse across
+// a session: the achieved send rate fell from ~50 packets per heartbeat to
+// ~15, and the drone's replies stopped arriving on time. Not just bulk data --
+// three-byte log-control acknowledgements were taking over fifteen seconds,
+// then landing all at once in a burst. That is a queue draining, not a drone
+// thinking.
+//
+// Idling at 60ms still pumps the bridge many times a second while leaving the
+// radio free to actually deliver what the drone is sending back. Real queued
+// traffic is unaffected and still goes out at POLL_DELAY_MS.
+const POLL_IDLE_DELAY_MS = 60;
 // A BLE write that never resolves (peripheral never sends the GATT response)
 // would otherwise wedge the poll loop forever — the only thing that
 // reschedules the next send is this write's own .finally(). Racing it against
@@ -592,6 +608,9 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
 
     const queued = packetQueueRef.current.shift();
     const packet = queued ?? NULL_PACKET;
+    // Pace by what was actually sent: back-to-back when there is real traffic
+    // to move, unhurried when we are only keeping the bridge alive.
+    const nextDelay = queued === undefined ? POLL_IDLE_DELAY_MS : POLL_DELAY_MS;
     pollSentCountRef.current += 1;
 
     // Timeout-wrapped: a write that never settles must not be able to wedge
@@ -604,7 +623,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       .finally(() => {
         sendingRef.current = false;
         if (pollingActiveRef.current) {
-          setTimeout(sendNext, POLL_DELAY_MS);
+          setTimeout(sendNext, nextDelay);
         }
       });
   };
@@ -829,29 +848,27 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       return 0;
     }
 
-    // Refuse a recording made from a dead telemetry stream.
+    // Refuse a recording of a flight that did not happen.
     //
-    // If the log blocks vanish from the drone mid-session, logValues freezes
-    // and every read here returns 0. The recorder cannot tell that apart from
-    // a real sample by looking at any single field -- so it happily saved 19
-    // samples of nothing, three times, and those became three flight cards
-    // reading 0.00m that drew three different 3D paths for what was actually
-    // the same repeated flight.
+    // The recorder runs for a fixed window from the moment START is pressed.
+    // It does not know whether the drone ever left the ground, so it saved
+    // "Flight 13:16:35" as 19 perfectly ordinary-looking samples during a
+    // window that contains no takeoff at all -- the drone sat on the pad the
+    // whole time. Three of six flights in that session were this, and they are
+    // exactly the cards reading 0.00m that made one repeated hover draw four
+    // different 3D paths.
     //
-    // All-zero across EVERY field is the giveaway. A drone sitting on the
-    // ground still reports its walls (f=245 b=188 on the pad); a drone with
-    // dead telemetry reports a clean zero for all nine. Nothing real looks
-    // like this.
-    const allZero = samples.every(
-      (p) => p.x === 0 && p.y === 0 && p.z === 0 &&
-             p.front === 0 && p.back === 0 && p.left === 0 && p.right === 0 &&
-             (p.up ?? 0) === 0 && (p.down ?? 0) === 0
-    );
-    if (allZero) {
+    // An all-zero check was not enough: a drone on the pad still reports its
+    // walls (f=275 b=214), so those samples are not zero, just meaningless.
+    // Altitude is the honest test. A real flight climbs to roughly 500mm; a
+    // drone on the ground reads single-digit millimetres however long you
+    // watch it.
+    const peakMm = Math.max(...samples.map((p) => p.z));
+    if (peakMm < 100) {
       console.error(
-        `[flight] discarding "${name}": all ${samples.length} samples are zero, so the ` +
-        'telemetry stream was dead, not the drone still. Nothing was recorded. ' +
-        "If the drone flew, its own copy is intact -- use DOWNLOAD FLIGHT FROM DRONE."
+        `[flight] discarding "${name}": peak altitude was ${peakMm}mm, so the drone ` +
+        'never left the ground during this recording. Either it did not take off, or ' +
+        'it flew outside the recording window. Nothing worth keeping either way.'
       );
       return 0;
     }
