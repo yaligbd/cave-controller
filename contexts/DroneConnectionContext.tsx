@@ -406,6 +406,54 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // it. The per-packet [log data] log below is a TEMPORARY diagnostic added
   // to find why no data was arriving; remove it (or the CRTP_DEBUG-style
   // gating) once confirmed working, it will flood the console otherwise.
+  // Rebuild log blocks that have vanished from the drone -- ONE AT A TIME.
+  //
+  // This is the rule already written in CLAUDE.md, which the first version of
+  // this recovery broke: "Never create two log blocks back to back. Their
+  // fragments interleave and whichever block loses the race is silently
+  // destroyed, with no error anywhere."
+  //
+  // Recovery was firing delete+create+start for all three blocks back to back,
+  // so the blocks it was repairing destroyed each other on the way in. The
+  // drone answered "log start block 0: OK" and then sent nothing, the next
+  // flight recorded 1mm of altitude for a 568mm climb, and the download after
+  // that reported ENOENT -- which triggered another simultaneous rebuild. A
+  // repair loop that fed itself, getting worse the longer a session ran.
+  //
+  // Staggering matches what connection setup already does successfully (500ms,
+  // 1500ms, 3000ms), and one rebuild runs at a time: the ENOENT handler and the
+  // post-download check both used to fire for the same blocks at once.
+  const rebuildPendingRef = useRef<Set<number>>(new Set());
+  const rebuildRunningRef = useRef(false);
+
+  const rebuildLogBlocks = (ids: number[], why: string) => {
+    for (const id of ids) rebuildPendingRef.current.add(id);
+    if (rebuildRunningRef.current) return;
+    rebuildRunningRef.current = true;
+
+    const next = () => {
+      const id = rebuildPendingRef.current.values().next().value;
+      if (id === undefined) {
+        rebuildRunningRef.current = false;
+        return;
+      }
+      rebuildPendingRef.current.delete(id);
+
+      const entries = logBlocksRef.current.get(id);
+      const period = logPeriodsRef.current.get(id);
+      if (entries && period !== undefined) {
+        console.warn(`[drone] rebuilding log block ${id} (${why})`);
+        sendPacket(logDeleteBlockPacket(id));
+        sendPacket(logCreateBlockPacket(id, entries));
+        sendPacket(logStartBlockPacket(id, period));
+      }
+      // Wait before the next one even if this one was skipped, so a skip cannot
+      // collapse the gap that makes staggering work.
+      setTimeout(next, 1500);
+    };
+    next();
+  };
+
   const handleLogData = (packet: Uint8Array) => {
     lastLogDataAtRef.current = Date.now();
     const blockId = packet[1];
@@ -496,19 +544,11 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
           // Rebuild it from the definition we already hold, rather than
           // leaving the link half dead until the next reconnect.
           if (err === 2 && (cmd === 3 || cmd === 4)) {
-            const entries = logBlocksRef.current.get(blockId);
-            const period = logPeriodsRef.current.get(blockId);
             const tries = blockRecoveryRef.current.get(blockId) ?? 0;
-            if (entries && period !== undefined && tries < 3) {
+            if (tries < 3) {
               blockRecoveryRef.current.set(blockId, tries + 1);
-              console.warn(
-                `[drone] log block ${blockId} is gone from the drone — rebuilding it ` +
-                `(attempt ${tries + 1} of 3)`
-              );
-              sendPacket(logDeleteBlockPacket(blockId));
-              sendPacket(logCreateBlockPacket(blockId, entries));
-              sendPacket(logStartBlockPacket(blockId, period));
-            } else if (tries >= 3) {
+              rebuildLogBlocks([blockId], `gone from the drone, attempt ${tries + 1} of 3`);
+            } else {
               // Stop trying rather than rebuild forever on a link that is
               // refusing. Three failures is a real fault, not a glitch.
               console.error(
@@ -943,17 +983,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       const resumedAt = Date.now();
       setTimeout(() => {
         if (lastLogDataAtRef.current >= resumedAt) return;   // flowing again
-        console.warn(
-          '[download] telemetry did not restart after the download — rebuilding the blocks'
-        );
-        for (const id of paused) {
-          const entries = logBlocksRef.current.get(id);
-          const period = logPeriodsRef.current.get(id);
-          if (!entries || period === undefined) continue;
-          sendPacket(logDeleteBlockPacket(id));
-          sendPacket(logCreateBlockPacket(id, entries));
-          sendPacket(logStartBlockPacket(id, period));
-        }
+        rebuildLogBlocks(paused, 'telemetry did not restart after the download');
       }, 2500);
     };
 
