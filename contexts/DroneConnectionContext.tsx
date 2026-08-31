@@ -304,6 +304,8 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // How fast each block was asked to stream. Kept so a block that is paused
   // for a download can be resumed at its original rate rather than guessed at.
   const logPeriodsRef = useRef<Map<number, number>>(new Map());
+  // How many times each block has been rebuilt after vanishing from the drone.
+  const blockRecoveryRef = useRef<Map<number, number>>(new Map());
   // Block ids that have delivered at least one data packet since being started.
   const blocksSeenRef = useRef<Set<number>>(new Set());
   // Temporary diagnostic — logs at most once per block if a data packet ever
@@ -462,7 +464,43 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
             : err === 17 ? 'EEXIST — that block id is already registered on the drone'
             : `errno ${err}`;
           console.error(`[drone] log ${cmdName} block ${blockId} FAILED: ${meaning}`);
+
+          // A start or stop that returns ENOENT means the block is GONE from
+          // the drone -- not that a variable is missing. Telemetry then stays
+          // silently dead, logValues stops updating, and the phone-side
+          // recorder keeps saving whatever it last saw. That is how three
+          // "flights" came to be stored as 19 samples of pure zero while the
+          // drone was in the air reporting a 566mm climb, and why the 3D view
+          // drew three different pictures of one repeated flight.
+          //
+          // Rebuild it from the definition we already hold, rather than
+          // leaving the link half dead until the next reconnect.
+          if (err === 2 && (cmd === 3 || cmd === 4)) {
+            const entries = logBlocksRef.current.get(blockId);
+            const period = logPeriodsRef.current.get(blockId);
+            const tries = blockRecoveryRef.current.get(blockId) ?? 0;
+            if (entries && period !== undefined && tries < 3) {
+              blockRecoveryRef.current.set(blockId, tries + 1);
+              console.warn(
+                `[drone] log block ${blockId} is gone from the drone — rebuilding it ` +
+                `(attempt ${tries + 1} of 3)`
+              );
+              sendPacket(logDeleteBlockPacket(blockId));
+              sendPacket(logCreateBlockPacket(blockId, entries));
+              sendPacket(logStartBlockPacket(blockId, period));
+            } else if (tries >= 3) {
+              // Stop trying rather than rebuild forever on a link that is
+              // refusing. Three failures is a real fault, not a glitch.
+              console.error(
+                `[drone] log block ${blockId} could not be rebuilt after 3 attempts. ` +
+                'Telemetry for it stays dead until you reconnect.'
+              );
+            }
+          }
         }
+        // A block that answers anything successfully is healthy again, so its
+        // recovery count must not carry over to a later, unrelated failure.
+        if (err === 0) blockRecoveryRef.current.delete(blockId);
         return;
       }
 
@@ -788,6 +826,33 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     recordSamplesRef.current = [];
     if (samples.length < 3) {
       console.warn(`[flight] only ${samples.length} samples, not saving`);
+      return 0;
+    }
+
+    // Refuse a recording made from a dead telemetry stream.
+    //
+    // If the log blocks vanish from the drone mid-session, logValues freezes
+    // and every read here returns 0. The recorder cannot tell that apart from
+    // a real sample by looking at any single field -- so it happily saved 19
+    // samples of nothing, three times, and those became three flight cards
+    // reading 0.00m that drew three different 3D paths for what was actually
+    // the same repeated flight.
+    //
+    // All-zero across EVERY field is the giveaway. A drone sitting on the
+    // ground still reports its walls (f=245 b=188 on the pad); a drone with
+    // dead telemetry reports a clean zero for all nine. Nothing real looks
+    // like this.
+    const allZero = samples.every(
+      (p) => p.x === 0 && p.y === 0 && p.z === 0 &&
+             p.front === 0 && p.back === 0 && p.left === 0 && p.right === 0 &&
+             (p.up ?? 0) === 0 && (p.down ?? 0) === 0
+    );
+    if (allZero) {
+      console.error(
+        `[flight] discarding "${name}": all ${samples.length} samples are zero, so the ` +
+        'telemetry stream was dead, not the drone still. Nothing was recorded. ' +
+        "If the drone flew, its own copy is intact -- use DOWNLOAD FLIGHT FROM DRONE."
+      );
       return 0;
     }
 
