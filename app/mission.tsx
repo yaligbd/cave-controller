@@ -58,6 +58,10 @@ export default function MissionScreen() {
   const [timer, setTimer] = useState(10);
   const [height, setHeight] = useState(500);
   const [sampleDist, setSampleDist] = useState(10);
+  // Off by default, matching the firmware. Wall following is the interesting
+  // mode but also the untested one, so it is something you choose rather than
+  // something you have to remember to turn off.
+  const [wallFollow, setWallFollow] = useState(false);
   const [flying, setFlying] = useState(false);
 
   const status = getStatus(bleAvailable, isConnected, tocProgress, params);
@@ -106,6 +110,25 @@ export default function MissionScreen() {
         await setParam('mission.sampledist', sampleDist);
       } else {
         console.log('[mission] firmware has no mission.sampledist parameter — skipping sample distance');
+      }
+
+      // Always written, never assumed. The firmware defaults this to 0, but a
+      // previous mission on the same power cycle may have left it at 1, and a
+      // drone that goes wall following when you asked it to hover is worse
+      // than one that refuses to.
+      if (params.has('mission.wallfollow')) {
+        await setParam('mission.wallfollow', wallFollow ? 1 : 0);
+      } else if (wallFollow) {
+        // Say so rather than flying a hover and leaving the pilot to wonder
+        // why the drone ignored them. This is exactly what happened once:
+        // the firmware had the parameter, the app had no way to set it, and
+        // the flight looked identical to a normal hover with no explanation.
+        Alert.alert(
+          'This firmware cannot wall follow',
+          'The drone does not have the mission.wallfollow parameter, so it ' +
+          'would simply hover. Flash the mission firmware first.'
+        );
+        return;
       }
 
       await new Promise((resolve) => setTimeout(resolve, 150));
@@ -208,9 +231,44 @@ Open the SIMULATOR screen to view it in 3D, rename it, or delete it.`
             onChangeText={(text) => setSampleDist(Number(text))}
             keyboardType="numeric"
             value={sampleDist.toString()}
-            style={[localStyles.input, { marginBottom: 0 }]}
+            style={localStyles.input}
             placeholderTextColor={palette.textMuted}
           />
+
+          <Text style={localStyles.fieldLabel}>Flight Mode</Text>
+          <View style={localStyles.modeRow}>
+            <TouchableOpacity
+              style={[
+                localStyles.modeButton,
+                !wallFollow
+                  ? { borderColor: palette.ready, backgroundColor: alpha(palette.ready, 0.12) }
+                  : { borderColor: palette.border, backgroundColor: palette.surface },
+              ]}
+              onPress={() => setWallFollow(false)}
+            >
+              <Text style={[localStyles.modeText, { color: !wallFollow ? palette.ready : palette.textMuted }]}>
+                HOVER
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                localStyles.modeButton,
+                wallFollow
+                  ? { borderColor: palette.ready, backgroundColor: alpha(palette.ready, 0.12) }
+                  : { borderColor: palette.border, backgroundColor: palette.surface },
+              ]}
+              onPress={() => setWallFollow(true)}
+            >
+              <Text style={[localStyles.modeText, { color: wallFollow ? palette.ready : palette.textMuted }]}>
+                FOLLOW WALL
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={localStyles.modeHint}>
+            {wallFollow
+              ? 'Start with a wall on the drone’s RIGHT, about 40cm away, nose pointing along it. It flies out for half the timer, then retraces its route home. It cannot turn corners.'
+              : 'Climbs, holds position for the timer, lands.'}
+          </Text>
         </View>
 
         <TouchableOpacity
@@ -296,7 +354,30 @@ function createLocalStyles(palette: Palette) {
       fontSize: type.readout,
       color: palette.textPrimary,
     },
-    takeOffButton: {
+    modeRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  modeButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+  },
+  modeText: {
+    fontFamily: type.fontFamily,
+    fontSize: type.sm,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+  },
+  modeHint: {
+    fontFamily: type.fontFamily,
+    color: palette.textMuted,
+    fontSize: type.micro,
+    marginTop: spacing.sm,
+  },
+  takeOffButton: {
       borderWidth: 1,
       borderRadius: radius.sm,
       paddingVertical: spacing.lg,
