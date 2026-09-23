@@ -41,3 +41,7 @@ app-example
 # generated native folders
 /ios
 /android
+
+# internal notes, not for the public repo
+PROJECT_REPORT.md
+CLAUDE.md
