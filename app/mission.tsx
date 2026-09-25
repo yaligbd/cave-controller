@@ -14,18 +14,20 @@
 //   mission.timer       how long the flight lasts, in seconds
 //   mission.height      hover altitude, in mm
 //   mission.sampledist  recording spacing
-//   mission.wallfollow  0 = hover in place, 1 = seek and follow a wall
+//   mission.wallfollow  0 = hover, 1 = follow the wall on the RIGHT,
+//                       2 = follow the wall on the LEFT
 //   mission.state = 1   GO. Everything above must already be set.
 //
 // The settings are written BEFORE the state, and the state is written last on
 // purpose. Reordering this launches the drone on whatever settings happened to
 // be left over from the previous mission.
 //
-// mission.wallfollow IS WRITTEN ON EVERY TAKEOFF, INCLUDING WHEN IT IS OFF.
+// mission.wallfollow IS WRITTEN ON EVERY TAKEOFF, INCLUDING WHEN IT IS 0.
 // The firmware defaults it to 0, but a mission earlier in the same power cycle
-// may have left it at 1. A drone that goes wall following when the pilot asked
-// for a hover is the worse of the two ways to be wrong, so it is always sent
-// explicitly. Do not "optimise" that into only sending it when enabled.
+// may have left it at 1 or 2. A drone that follows a wall when the pilot asked
+// for a hover, or follows the wrong wall, is the worse of the two ways to be
+// wrong, so the mode is always sent explicitly. Do not "optimise" that into
+// only sending it when it is non-zero.
 //
 // The recorder is started BEFORE mission.state, so the climb is captured from
 // the first moment rather than from wherever the drone has already got to.
@@ -37,15 +39,22 @@
 // press. It needs to work on the first tap while something is going wrong.
 //
 // FLIGHT MODE
-// HOVER climbs, holds for the timer, lands. FOLLOW WALL seeks a wall on the
-// drone's RIGHT, follows it for half the timer, then retraces its own route
-// home. If the connected firmware has no mission.wallfollow, choosing FOLLOW
-// WALL refuses to take off and says so -- flying a silent hover instead is the
+// Three modes, and the button values ARE the wire values (0, 1, 2) so there is
+// no mapping table here to fall out of step with the firmware.
+//
+//   HOVER       climbs, holds for the timer, lands
+//   WALL RIGHT  follows a wall on the drone's right for half the timer,
+//               then retraces its own route home
+//   WALL LEFT   the exact mirror of WALL RIGHT
+//
+// If the connected firmware has no mission.wallfollow, choosing either wall
+// mode refuses to take off and says so. Flying a silent hover instead is the
 // exact failure that guard was added for, and it cost a flight to find.
 //
-// The setup text under the control is not decoration. Wall on the right, about
-// 40cm, nose along it. Wrong placement is the difference between a flight and
-// a crash, and there is no way for the app to check it.
+// The setup text under the control is not decoration. The wall must be on the
+// side the mode names, about 40cm away, with the nose pointing along it. Wrong
+// placement is the difference between a flight and a crash, and there is no way
+// for the app to check it.
 // ===========================================================================
 
 import Header from '@/components/Header';
@@ -108,10 +117,19 @@ export default function MissionScreen() {
   const [timer, setTimer] = useState(10);
   const [height, setHeight] = useState(500);
   const [sampleDist, setSampleDist] = useState(10);
-  // Off by default, matching the firmware. Wall following is the interesting
-  // mode but also the untested one, so it is something you choose rather than
-  // something you have to remember to turn off.
-  const [wallFollow, setWallFollow] = useState(false);
+  // Matches mission.wallfollow in the firmware exactly: 0 hover, 1 right,
+  // 2 left. Kept as the wire value rather than a friendlier enum so there is
+  // no mapping table to get out of step with the drone.
+  //
+  // Hover by default. Wall following is the interesting mode but also the one
+  // that can fly into something, so it is chosen deliberately rather than
+  // left on from last time.
+  const FLIGHT_MODES = [
+    { value: 0, label: 'HOVER',      hint: 'Climbs, holds position for the timer, lands.' },
+    { value: 1, label: 'WALL RIGHT', hint: 'Start with the wall on the drone’s RIGHT, about 40cm away, nose pointing along it. It follows the wall for half the timer, then retraces its route home.' },
+    { value: 2, label: 'WALL LEFT',  hint: 'The mirror of WALL RIGHT. Start with the wall on the drone’s LEFT, about 40cm away, nose pointing along it.' },
+  ];
+  const [flightMode, setFlightMode] = useState(0);
   const [flying, setFlying] = useState(false);
 
   const status = getStatus(bleAvailable, isConnected, tocProgress, params);
@@ -167,8 +185,8 @@ export default function MissionScreen() {
       // drone that goes wall following when you asked it to hover is worse
       // than one that refuses to.
       if (params.has('mission.wallfollow')) {
-        await setParam('mission.wallfollow', wallFollow ? 1 : 0);
-      } else if (wallFollow) {
+        await setParam('mission.wallfollow', flightMode);
+      } else if (flightMode !== 0) {
         // Say so rather than flying a hover and leaving the pilot to wonder
         // why the drone ignored them. This is exactly what happened once:
         // the firmware had the parameter, the app had no way to set it, and
@@ -287,37 +305,28 @@ Open the SIMULATOR screen to view it in 3D, rename it, or delete it.`
 
           <Text style={localStyles.fieldLabel}>Flight Mode</Text>
           <View style={localStyles.modeRow}>
-            <TouchableOpacity
-              style={[
-                localStyles.modeButton,
-                !wallFollow
-                  ? { borderColor: palette.ready, backgroundColor: alpha(palette.ready, 0.12) }
-                  : { borderColor: palette.border, backgroundColor: palette.surface },
-              ]}
-              onPress={() => setWallFollow(false)}
-            >
-              <Text style={[localStyles.modeText, { color: !wallFollow ? palette.ready : palette.textMuted }]}>
-                HOVER
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                localStyles.modeButton,
-                wallFollow
-                  ? { borderColor: palette.ready, backgroundColor: alpha(palette.ready, 0.12) }
-                  : { borderColor: palette.border, backgroundColor: palette.surface },
-              ]}
-              onPress={() => setWallFollow(true)}
-            >
-              <Text style={[localStyles.modeText, { color: wallFollow ? palette.ready : palette.textMuted }]}>
-                FOLLOW WALL
-              </Text>
-            </TouchableOpacity>
+            {FLIGHT_MODES.map((m) => {
+              const on = flightMode === m.value;
+              return (
+                <TouchableOpacity
+                  key={m.value}
+                  style={[
+                    localStyles.modeButton,
+                    on
+                      ? { borderColor: palette.ready, backgroundColor: alpha(palette.ready, 0.12) }
+                      : { borderColor: palette.border, backgroundColor: palette.surface },
+                  ]}
+                  onPress={() => setFlightMode(m.value)}
+                >
+                  <Text style={[localStyles.modeText, { color: on ? palette.ready : palette.textMuted }]}>
+                    {m.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
           <Text style={localStyles.modeHint}>
-            {wallFollow
-              ? 'Start with a wall on the drone’s RIGHT, about 40cm away, nose pointing along it. It flies out for half the timer, then retraces its route home. It cannot turn corners.'
-              : 'Climbs, holds position for the timer, lands.'}
+            {FLIGHT_MODES[flightMode].hint}
           </Text>
         </View>
 
@@ -417,7 +426,9 @@ function createLocalStyles(palette: Palette) {
   },
   modeText: {
     fontFamily: type.fontFamily,
-    fontSize: type.sm,
+    // Smaller than the other buttons: three labels have to share one row on a
+    // phone, and "WALL RIGHT" must not wrap.
+    fontSize: type.xs,
     fontWeight: 'bold',
     letterSpacing: 1,
   },
