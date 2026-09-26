@@ -176,10 +176,25 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
               if (hasRealPos) {
                 // three.js is Y-up; the drone reports Z-up. So the drone's Z
                 // becomes the scene's Y, and the drone's Y becomes the scene's Z.
+                //
+                // AND THE DRONE'S Y IS NEGATED. That minus sign is not a fudge,
+                // it is the whole difference between a map and its reflection.
+                //
+                // Swapping two axes of a right-handed frame produces a LEFT-
+                // handed one, and a left-handed scene is drawn mirrored. Every
+                // ray stayed consistent with the path, so nothing looked broken
+                // -- but a wall the drone had on its right was drawn on its
+                // left, which is exactly what a flight along a right-hand wall
+                // showed. Negating one axis restores the handedness and un-
+                // mirrors the whole scene, path and rays together.
+                //
+                // Every direction below therefore uses scene Z = -(drone y):
+                //   forward  ( cos yaw, 0, -sin yaw)
+                //   left     (-sin yaw, 0, -cos yaw)
                 p3d = new THREE.Vector3(
                   flightData.posX[i],
                   flightData.posZ[i],
-                  flightData.posY[i]
+                  -flightData.posY[i]
                 );
               } else {
                 if (i > 0) {
@@ -187,16 +202,16 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
                   currentX += Math.cos(yawRad) * 1.5 * dt;
                   currentY += Math.sin(yawRad) * 1.5 * dt;
                 }
-                p3d = new THREE.Vector3(currentX, (flightData.downSensor[i] || 0), currentY);
+                p3d = new THREE.Vector3(currentX, (flightData.downSensor[i] || 0), -currentY);
               }
               pathPoints.push(p3d);
               lastValidP3D = p3d;
 
               const sensorRays = [
-                { val: flightData.frontSensor[i], dir: new THREE.Vector3(Math.cos(yawRad), 0, Math.sin(yawRad)), col: colors.front },
-                { val: flightData.backSensor[i], dir: new THREE.Vector3(-Math.cos(yawRad), 0, -Math.sin(yawRad)), col: colors.back },
-                { val: flightData.leftSensor[i], dir: new THREE.Vector3(-Math.sin(yawRad), 0, Math.cos(yawRad)), col: colors.left },
-                { val: flightData.rightSensor[i], dir: new THREE.Vector3(Math.sin(yawRad), 0, -Math.cos(yawRad)), col: colors.right },
+                { val: flightData.frontSensor[i], dir: new THREE.Vector3(Math.cos(yawRad), 0, -Math.sin(yawRad)), col: colors.front },
+                { val: flightData.backSensor[i], dir: new THREE.Vector3(-Math.cos(yawRad), 0, Math.sin(yawRad)), col: colors.back },
+                { val: flightData.leftSensor[i], dir: new THREE.Vector3(-Math.sin(yawRad), 0, -Math.cos(yawRad)), col: colors.left },
+                { val: flightData.rightSensor[i], dir: new THREE.Vector3(Math.sin(yawRad), 0, Math.cos(yawRad)), col: colors.right },
                 { val: flightData.TopSensor[i], dir: new THREE.Vector3(0, 1, 0), col: colors.up },
                 // Down was measured all along and never drawn. Without it the
                 // drone appears to float with nothing below, and the height
@@ -274,7 +289,10 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
           }
 
           window.pushLivePoint = function(pt) {
-            const p3d = new THREE.Vector3(pt.x, pt.z, pt.y); // Note mapping from (x,y,z) drone space
+            // Drone (x,y,z) -> scene (x, z, -y). The minus keeps the scene
+            // right-handed; without it the whole view is mirrored. See the long
+            // note on the same mapping above.
+            const p3d = new THREE.Vector3(pt.x, pt.z, -pt.y);
             pathPoints.push(p3d);
             lastValidP3D = p3d;
 
@@ -290,10 +308,10 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
 
             const yawRad = pt.yaw * (Math.PI / 180);
             const sensorRays = [
-              { val: pt.sensors.front, dir: new THREE.Vector3(Math.cos(yawRad), 0, Math.sin(yawRad)), col: colors.front },
-              { val: pt.sensors.back, dir: new THREE.Vector3(-Math.cos(yawRad), 0, -Math.sin(yawRad)), col: colors.back },
-              { val: pt.sensors.left, dir: new THREE.Vector3(-Math.sin(yawRad), 0, Math.cos(yawRad)), col: colors.left },
-              { val: pt.sensors.right, dir: new THREE.Vector3(Math.sin(yawRad), 0, -Math.cos(yawRad)), col: colors.right },
+              { val: pt.sensors.front, dir: new THREE.Vector3(Math.cos(yawRad), 0, -Math.sin(yawRad)), col: colors.front },
+              { val: pt.sensors.back, dir: new THREE.Vector3(-Math.cos(yawRad), 0, Math.sin(yawRad)), col: colors.back },
+              { val: pt.sensors.left, dir: new THREE.Vector3(-Math.sin(yawRad), 0, -Math.cos(yawRad)), col: colors.left },
+              { val: pt.sensors.right, dir: new THREE.Vector3(Math.sin(yawRad), 0, Math.cos(yawRad)), col: colors.right },
               { val: pt.sensors.up, dir: new THREE.Vector3(0, 1, 0), col: colors.up },
               { val: pt.sensors.down, dir: new THREE.Vector3(0, -1, 0), col: colors.down }
             ];
