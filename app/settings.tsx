@@ -1,9 +1,11 @@
 import Header from '@/components/Header';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
+import { useAuth } from '@/contexts/AuthContext';
+import { useDialog } from '@/contexts/DialogContext';
 import { useDroneConnection } from '@/contexts/DroneConnectionContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import React, { useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 interface TunableConfig {
@@ -25,6 +27,8 @@ const TUNABLE_PARAMS: TunableConfig[] = [
 export default function SettingsScreen() {
   const { styles, palette, mode, toggleMode } = useTheme();
   const { isConnected, params, setParam } = useDroneConnection();
+  const dialog = useDialog();
+  const { account, signOut } = useAuth();
 
   const [tuningValues, setTuningValues] = useState<Record<string, number>>(() =>
     Object.fromEntries(TUNABLE_PARAMS.map((p) => [p.fullName, p.defaultValue]))
@@ -39,21 +43,31 @@ export default function SettingsScreen() {
     });
   };
 
-  const handleDeleteAllData = () => {
-    Alert.alert(
+  const handleDeleteAllData = async () => {
+    const yes = await dialog.confirm(
       'Delete all data?',
-      'This will permanently delete all locally stored data.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert('Nothing to delete', 'No local data is stored yet.');
-          },
-        },
-      ]
+      'Every saved flight on this phone would be removed permanently. Flights already ' +
+        'downloaded from the drone cannot be recovered afterwards.',
+      { destructive: true, confirmLabel: 'Delete everything' }
     );
+    if (!yes) return;
+    // Not wired up yet, and saying so is better than a button that silently
+    // does nothing. Deleting flights one at a time works from the Simulator
+    // screen today.
+    await dialog.notify(
+      'Not available yet',
+      'Bulk delete is not implemented. Delete individual flights from the Simulator screen instead.',
+      { variant: 'warn' }
+    );
+  };
+
+  const handleSignOut = async () => {
+    const yes = await dialog.confirm(
+      'Sign out?',
+      'Your saved flights stay on this phone. You can sign back in at any time.',
+      { confirmLabel: 'Sign out' }
+    );
+    if (yes) await signOut();
   };
 
   const localStyles = useMemo(() => createLocalStyles(palette), [palette]);
@@ -96,6 +110,19 @@ export default function SettingsScreen() {
     <SafeAreaProvider style={styles.safeArea}>
       <Header />
       <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+        {/* ---------- ACCOUNT ---------- */}
+        <Text style={localStyles.sectionTitle}>Account</Text>
+        <View style={localStyles.card}>
+          <Text style={localStyles.cardHeading}>{account?.displayName ?? 'Not signed in'}</Text>
+          <Text style={localStyles.bodyText}>{account?.email ?? '—'}</Text>
+          <Text style={localStyles.captionText}>
+            Signed in on this phone only. Flights are stored locally and are not synced yet.
+          </Text>
+          <TouchableOpacity style={localStyles.dangerButton} onPress={handleSignOut}>
+            <Text style={localStyles.dangerButtonText}>Sign out</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* ---------- a) HARDWARE SETUP ---------- */}
         <Text style={localStyles.sectionTitle}>Hardware Setup</Text>
         <View style={localStyles.card}>
@@ -212,6 +239,23 @@ function createLocalStyles(palette: Palette) {
       color: palette.textMuted,
       fontSize: type.xs,
       marginBottom: spacing.md,
+    },
+    dangerButton: {
+      minHeight: 44,
+      marginTop: spacing.sm,
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: palette.fault,
+      backgroundColor: alpha(palette.fault, 0.12),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    dangerButtonText: {
+      fontFamily: type.fontFamily,
+      fontSize: type.xs,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      color: palette.fault,
     },
     warningBanner: {
       backgroundColor: alpha(palette.fault, 0.1),

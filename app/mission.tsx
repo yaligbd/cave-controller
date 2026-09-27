@@ -60,9 +60,10 @@
 import Header from '@/components/Header';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import React, { useMemo, useState } from 'react';
-import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { useDialog } from '@/contexts/DialogContext';
 import { useDroneConnection } from '@/contexts/DroneConnectionContext';
 import { useTheme } from '@/contexts/ThemeContext';
 
@@ -112,6 +113,7 @@ function getStatus(
 
 export default function MissionScreen() {
   const { styles, palette } = useTheme();
+  const dialog = useDialog();
   const { isConnected, bleAvailable, params, tocProgress, setParam, startFlightRecording, stopFlightRecording} = useDroneConnection();
 
   const [timer, setTimer] = useState(10);
@@ -161,7 +163,7 @@ export default function MissionScreen() {
   const handleTakeOff = async () => {
     const validationError = validateInputs();
     if (validationError) {
-      Alert.alert('Invalid input', validationError);
+      await dialog.error('Invalid input', validationError);
       return;
     }
 
@@ -191,10 +193,10 @@ export default function MissionScreen() {
         // why the drone ignored them. This is exactly what happened once:
         // the firmware had the parameter, the app had no way to set it, and
         // the flight looked identical to a normal hover with no explanation.
-        Alert.alert(
+        await dialog.error(
           'This firmware cannot wall follow',
-          'The drone does not have the mission.wallfollow parameter, so it ' +
-          'would simply hover. Flash the mission firmware first.'
+          'The drone would simply hover instead of following a wall. Flash the mission firmware first.',
+          'mission.wallfollow is missing from the parameter table of the connected firmware.'
         );
         return;
       }
@@ -220,21 +222,25 @@ export default function MissionScreen() {
         const n = await stopFlightRecording(name);
         setFlying(false);
         if (n > 0) {
-          Alert.alert(
+          await dialog.notify(
             'Flight saved',
-            `${n} samples recorded.
-
-Open the SIMULATOR screen to view it in 3D, rename it, or delete it.`
+            `${n} samples recorded. Open the Simulator screen to view it in 3D, rename it, or delete it.`,
+            { variant: 'success' }
           );
         } else {
-          Alert.alert(
+          await dialog.notify(
             'Nothing recorded',
-            'No usable samples were captured. Check that the drone is connected and streaming.'
+            'No usable samples were captured. Check that the drone is connected and streaming telemetry.',
+            { variant: 'warn' }
           );
         }
       }, totalMs);
     } catch (error) {
-      Alert.alert('Take off failed', error instanceof Error ? error.message : String(error));
+      await dialog.error(
+        'Take off failed',
+        'The drone did not accept the mission. It has not taken off.',
+        error instanceof Error ? error.message : String(error)
+      );
     }
   };
 
@@ -244,9 +250,17 @@ Open the SIMULATOR screen to view it in 3D, rename it, or delete it.`
       // Keep whatever was captured up to the abort -- a cut-short flight is
       // still real data, and often the more interesting kind.
       const n = await stopFlightRecording(`Aborted ${new Date().toLocaleString()}`);
-      if (n > 0) Alert.alert('Partial flight saved', `${n} samples kept.`);
+      if (n > 0) {
+        await dialog.notify('Partial flight saved', `${n} samples kept from the aborted flight.`, {
+          variant: 'success',
+        });
+      }
     } catch (error) {
-      Alert.alert('Abort failed', error instanceof Error ? error.message : String(error));
+      await dialog.error(
+        'Abort failed',
+        'The abort command was not acknowledged. The drone may still be flying — be ready to catch it.',
+        error instanceof Error ? error.message : String(error)
+      );
     } finally {
       setFlying(false);
     }

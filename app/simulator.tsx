@@ -45,13 +45,15 @@ import {
   type StoredFlight,
 } from '@/services/FlightStore';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
+import { useDialog } from '@/contexts/DialogContext';
 import { useDroneConnection } from '@/contexts/DroneConnectionContext';
 
 export default function SimulatorScreen() {
   const { styles, palette } = useTheme();
+  const dialog = useDialog();
   const { logValues, isConnected, downloadFlightFromDrone, clearDroneRecording} = useDroneConnection();
   // Real flights downloaded from the drone. The demo fixtures are gone: they
   // made an empty app look populated, so "no flights yet" was indistinguishable
@@ -77,20 +79,17 @@ export default function SimulatorScreen() {
       const n = await downloadFlightFromDrone(name);
       if (n > 0) {
         reload();
-        Alert.alert(
+        const clear = await dialog.confirm(
           'Flight downloaded',
-          `${n} samples came from the drone's own memory.
-
-Clear the drone's copy now?`,
-          [
-            { text: 'Keep it', style: 'cancel' },
-            { text: 'Clear', onPress: clearDroneRecording },
-          ]
+          `${n} samples came from the drone's own memory. Clear the drone's copy now?`,
+          { variant: 'success', confirmLabel: 'Clear', cancelLabel: 'Keep it' }
         );
+        if (clear) await clearDroneRecording();
       } else {
-        Alert.alert(
+        await dialog.notify(
           'Nothing downloaded',
-          'The drone did not send a usable flight. It may not have recorded one yet.'
+          'The drone did not send a usable flight. It may not have recorded one yet.',
+          { variant: 'warn' }
         );
       }
     } finally {
@@ -122,15 +121,15 @@ Clear the drone's copy now?`,
     reload();
   };
 
-  const onDelete = (f: StoredFlight) => {
-    Alert.alert('Delete flight', `Delete "${f.name}"? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => { await deleteFlight(f.id); reload(); },
-      },
-    ]);
+  const onDelete = async (f: StoredFlight) => {
+    const yes = await dialog.confirm(
+      'Delete flight',
+      `"${f.name}" will be removed from this phone. This cannot be undone.`,
+      { destructive: true, confirmLabel: 'Delete' }
+    );
+    if (!yes) return;
+    await deleteFlight(f.id);
+    reload();
   };
 
   const localStyles = useMemo(() => createLocalStyles(palette), [palette]);
