@@ -1,6 +1,7 @@
 import Header from '@/components/Header';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { BleStatus, useDroneConnection } from '@/contexts/DroneConnectionContext';
+import { describeDroneError } from '@/services/DroneErrors';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { Href, useRouter } from 'expo-router';
@@ -74,6 +75,8 @@ interface ConnStatus {
   word: string;
   detail: string;
   spinning: boolean;
+  /** What to do about it. Only failures carry one. */
+  fix?: string;
 }
 
 // Every branch here corresponds to a bleStatus value from DroneConnectionContext,
@@ -93,20 +96,14 @@ function getConnStatus(
   switch (bleStatus) {
     case 'requesting-permission':
       return { level: 'warn', word: 'Requesting Permission', detail: 'Waiting for Bluetooth permission…', spinning: true };
-    case 'permission-denied':
-      return {
-        level: 'fault',
-        word: 'Permission Denied',
-        detail: bleError ?? 'A required permission was refused.',
-        spinning: false,
-      };
-    case 'bluetooth-off':
-      return {
-        level: 'warn',
-        word: 'Bluetooth Off',
-        detail: bleError ?? 'Turn on Bluetooth to continue.',
-        spinning: false,
-      };
+    case 'permission-denied': {
+      const info = describeDroneError(bleError ?? 'permission refused');
+      return { level: 'fault', word: info.title, detail: info.message, fix: info.fix, spinning: false };
+    }
+    case 'bluetooth-off': {
+      const info = describeDroneError(bleError ?? 'bluetooth is off');
+      return { level: 'warn', word: info.title, detail: info.message, fix: info.fix, spinning: false };
+    }
     case 'scanning':
       return { level: 'warn', word: 'Scanning', detail: 'Looking for a Crazyflie nearby…', spinning: true };
     case 'found':
@@ -115,8 +112,13 @@ function getConnStatus(
       return { level: 'warn', word: 'Connecting', detail: 'Establishing BLE link…', spinning: true };
     case 'fetching-toc':
       return { level: 'warn', word: 'Reading Parameters', detail: 'Loading parameter list…', spinning: true };
-    case 'error':
-      return { level: 'fault', word: 'Error', detail: bleError ?? 'Something went wrong.', spinning: false };
+    case 'error': {
+      // The raw text is never shown as the headline. describeDroneError turns
+      // "Operation was rejected" into what happened and what to do, and keeps
+      // the original for the detail block.
+      const info = describeDroneError(bleError);
+      return { level: 'fault', word: info.title, detail: info.message, fix: info.fix, spinning: false };
+    }
     case 'connected':
       return { level: 'ready', word: 'Connected', detail: deviceName ?? 'unnamed device', spinning: false };
     case 'idle':
@@ -205,6 +207,7 @@ export default function ConnectScreen() {
             </Text>
           </View>
           <Text style={localStyles.statusDetail}>{connStatus.detail}</Text>
+          {!!connStatus.fix && <Text style={localStyles.statusFix}>{connStatus.fix}</Text>}
         </View>
 
         <TouchableOpacity
@@ -416,6 +419,18 @@ function createLocalStyles(palette: Palette) {
       color: palette.textSecondary,
       marginTop: spacing.xs,
     },
+    // What to do, set apart from what happened. Quieter and indented, so the
+    // eye reads the fault first and the instruction second.
+    statusFix: {
+      fontFamily: type.fontFamily,
+      fontSize: type.xs,
+      lineHeight: type.xs * 1.5,
+      color: palette.textMuted,
+      marginTop: spacing.sm,
+      paddingLeft: spacing.md,
+      borderLeftWidth: 1,
+      borderLeftColor: palette.border,
+    },
     connectButton: {
       width: '100%',
       borderWidth: 1,
@@ -430,7 +445,8 @@ function createLocalStyles(palette: Palette) {
       fontWeight: 'bold',
       letterSpacing: 2,
       textTransform: 'uppercase',
-    },
+    },
+
   selftestBanner: {
     borderWidth: 1,
     borderRadius: radius.md,

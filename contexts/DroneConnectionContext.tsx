@@ -346,6 +346,18 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // fetchLogToc().then(() => startLogBlock(...)) — the .then() callback still
   // closes over the state as it was when the effect/handler first ran. Refs
   // are updated synchronously, so they're always current.
+  // Set just before the app tears the link down on purpose.
+  //
+  // react-native-ble-plx fires onDisconnected() and the notification error
+  // handler for EVERY disconnect, including one the operator asked for. Without
+  // this flag a deliberate disconnect reported itself as a fault: status went
+  // to 'idle', then immediately to 'error (Drone disconnected unexpectedly)',
+  // so tapping Disconnect looked like something had gone wrong.
+  //
+  // A ref rather than state because the callbacks below close over it and need
+  // the value as it is when they fire, not as it was when they were created.
+  const intentionalDisconnectRef = useRef(false);
+
   const paramsRef = useRef<Map<string, ParamEntry>>(new Map());
   const logVarsRef = useRef<Map<string, LogEntry>>(new Map());
 
@@ -1555,6 +1567,10 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
         (error, characteristic) => {
           if (error) {
             if (CRTP_DEBUG) console.log(`[crtp rx ERROR] ${error.message}`);
+            // Tearing the link down on purpose cancels this subscription, and
+            // the cancellation arrives here as an error. Reporting that would
+            // be telling the operator their own Disconnect had failed.
+            if (intentionalDisconnectRef.current) return;
             console.error('[drone] Notification error:', error);
             setStatus('error', `Notification error: ${error.message}`);
             return;
@@ -1578,12 +1594,20 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       if (CRTP_DEBUG) console.log('[crtp] subscribed to CRTP_DOWN (0204) notifications');
 
       connected.onDisconnected((_error, disconnectedDevice) => {
-        console.log(`⚠️ Drone Disconnected: ${disconnectedDevice?.name}`);
+        const asked = intentionalDisconnectRef.current;
+        intentionalDisconnectRef.current = false;
+        console.log(`Drone disconnected: ${disconnectedDevice?.name}${asked ? ' (as requested)' : ' (unexpectedly)'}`);
         cleanupConnection();
-        setStatus('error', 'Drone disconnected unexpectedly.');
+        // Only a disconnect nobody asked for is a fault.
+        if (asked) setStatus('idle');
+        else setStatus('error', 'Drone disconnected unexpectedly.');
       });
 
       setIsConnected(true);
+      // Cleared on every fresh link. If a disconnect threw before its callback
+      // ran, the flag would still be raised, and a genuinely unexpected drop
+      // later would be reported as one the operator had asked for.
+      intentionalDisconnectRef.current = false;
       setStatus('connected');
       startPolling();
       console.log('🚀 DRONE IS FULLY CONNECTED AND READY!');
@@ -1681,6 +1705,9 @@ withTocRetry(() => fetchParamToc().then(() => fetchLogToc()))
     // Best-effort — the queue is about to be cleared by cleanupConnection, so
     // this may not actually reach the drone, but it's cheap to try.
     stopLogBlock(0);
+    // Raised BEFORE anything tears down, so the callbacks that fire during
+    // teardown know this was asked for and stay quiet.
+    intentionalDisconnectRef.current = true;
     // Update the UI immediately so the user isn't left hanging.
     cleanupConnection();
     setStatus('idle');
