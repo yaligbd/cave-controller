@@ -241,9 +241,33 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
               pathLine = new THREE.Line(pathGeometry, pathMaterial);
               scene.add(pathLine);
               
-              const midPoint = pathPoints[Math.floor(pathPoints.length / 2)];
-              controls.target.copy(midPoint);
-              camera.position.set(midPoint.x + 10, midPoint.y + 8, midPoint.z + 10);
+              // Frame the camera to the SIZE of the flight, not a fixed
+              // distance from it.
+              //
+              // The camera used to sit 10m out on each axis regardless. A
+              // wall-following flight spans metres, so that happened to look
+              // right -- but a hover spans centimetres, and the same camera
+              // showed a speck lost in an empty grid. That is why hover
+              // "didn't make sense" while the following flights looked fine:
+              // the data was correct both times, the view only fitted one of
+              // them.
+              //
+              // Measuring the path's own extent and backing off proportionally
+              // frames any flight. The 1.5m floor stops a hover being zoomed in
+              // so far that a few centimetres of ordinary drift fill the screen
+              // and look like wild flying.
+              const box = new THREE.Box3().setFromPoints(pathPoints);
+              const centre = box.getCenter(new THREE.Vector3());
+              const size = box.getSize(new THREE.Vector3());
+              const extent = Math.max(size.x, size.y, size.z, 1.5);
+
+              controls.target.copy(centre);
+              camera.position.set(
+                centre.x + extent * 1.6,
+                centre.y + extent * 1.2 + 1.0,
+                centre.z + extent * 1.6
+              );
+              camera.lookAt(centre);
             }
           }
 
