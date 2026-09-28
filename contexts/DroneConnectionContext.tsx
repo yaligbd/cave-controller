@@ -61,6 +61,7 @@
 // flying, so that is where to work while the drone is unavailable.
 // ===========================================================================
 
+import { recordDroneError, recordLog } from '@/services/ErrorLog';
 import React, { createContext, useContext, useRef, useState } from 'react';
 import { loadToc, saveToc } from '@/services/TocCache';
 import {
@@ -464,13 +465,20 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     // the byte loss: 'Deck 1 test [FAIL]' arrives as 'Deck 1 est [FAIL]'.
     // No line in a healthy boot contains [FAIL], so this is specific enough.
     if (text.includes('[FAIL]')) {
+      // Recorded ONCE per boot, not once per failing line.
+      //
+      // One fault cascades: when the Multi-ranger's I2C expander stops
+      // answering, all five range sensors fail, then the deck, then the system
+      // check -- six [FAIL] lines for a single cause. Six identical alerts
+      // makes one problem look like six, and the first line is the one that
+      // names the cause anyway. The rest still reach the console.
+      const first = !bootFailedRef.current;
       bootFailedRef.current = true;
       setSelftestPassed(false);
-      console.error(
-        '[drone] BOOT SELF-TEST FAILED — the drone reported: "' + text.trim() + '". ' +
-        'When this happens the firmware never starts: no flying, no live data, ' +
-        'and every command is ignored. Nothing this app sends will have any effect.'
-      );
+      console.log('[drone] boot self-test FAIL line:', text.trim());
+      if (first) {
+        recordDroneError(text.trim(), 'self-test');
+      }
     } else if (/Self test pa?sed/i.test(text)) {
       bootFailedRef.current = false;
       setSelftestPassed(true);
@@ -756,7 +764,10 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
     // since nothing else ever reschedules the next send.
     withTimeout(writeCrtpBytes(packet, queued === undefined), WRITE_TIMEOUT_MS, 'CRTP write')
       .catch((error) => {
-        console.error('[drone] CRTP write failed:', error);
+        // Recorded, not console.error'd: the red dev overlay truncates this
+        // to about forty characters and covers the flight controls.
+        console.log('[drone] CRTP write failed:', error);
+        recordDroneError(error);
       })
       .finally(() => {
         sendingRef.current = false;
@@ -1571,7 +1582,8 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
             // the cancellation arrives here as an error. Reporting that would
             // be telling the operator their own Disconnect had failed.
             if (intentionalDisconnectRef.current) return;
-            console.error('[drone] Notification error:', error);
+            console.log('[drone] Notification error:', error);
+            recordDroneError(error);
             setStatus('error', `Notification error: ${error.message}`);
             return;
           }
@@ -1599,8 +1611,12 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
         console.log(`Drone disconnected: ${disconnectedDevice?.name}${asked ? ' (as requested)' : ' (unexpectedly)'}`);
         cleanupConnection();
         // Only a disconnect nobody asked for is a fault.
-        if (asked) setStatus('idle');
-        else setStatus('error', 'Drone disconnected unexpectedly.');
+        if (asked) {
+          setStatus('idle');
+        } else {
+          setStatus('error', 'Drone disconnected unexpectedly.');
+          recordDroneError('Drone disconnected unexpectedly.');
+        }
       });
 
       setIsConnected(true);
@@ -1685,11 +1701,13 @@ withTocRetry(() => fetchParamToc().then(() => fetchLogToc()))
   })
 .then(() => setStatus('connected'))
         .catch((error) => {
-          console.error('[drone] Failed to fetch parameter/log TOC:', error);
+          console.log('[drone] Failed to fetch parameter/log TOC:', error);
+          recordDroneError(error, 'toc');
           setStatus('error', `Failed to read parameter list: ${error instanceof Error ? error.message : String(error)}`);
         });
     } catch (error) {
-      console.error('❌ Connection failed:', error);
+      console.log('Connection failed:', error);
+      recordDroneError(error, 'connect');
       setStatus('error', `Connection failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
@@ -1716,7 +1734,8 @@ withTocRetry(() => fetchParamToc().then(() => fetchLogToc()))
       await device.cancelConnection();
       console.log('✅ Successfully disconnected.');
     } catch (error) {
-      console.error('❌ Error while disconnecting:', error);
+      console.log('Error while disconnecting:', error);
+      recordDroneError(error, 'disconnect');
       setStatus('error', `Error while disconnecting: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
@@ -1759,7 +1778,8 @@ withTocRetry(() => fetchParamToc().then(() => fetchLogToc()))
 
     manager.startDeviceScan(null, null, (error, device) => {
       if (error) {
-        console.error('[drone] Scan error:', error);
+        console.log('[drone] Scan error:', error);
+        recordDroneError(error, 'scan');
         stopScan();
         setStatus('error', `Scan failed: ${error.message}`);
         return;

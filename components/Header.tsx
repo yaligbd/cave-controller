@@ -14,6 +14,7 @@ const NAV_ITEMS: { href: Href; label: string }[] = [
   { href: '/', label: 'Connect' },
   { href: '/mission', label: 'Mission' },
   { href: '/simulator', label: 'Simulator' },
+  { href: '/logs', label: 'Logs' },
   { href: '/settings', label: 'Settings' },
 ];
 
