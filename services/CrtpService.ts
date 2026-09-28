@@ -870,6 +870,16 @@ export interface BulkSample {
   up: number;
   down: number;
   /**
+   * Which state the wall follower was in, 0-7, or undefined for a flight
+   * recorded before the drone stored it.
+   *
+   * 0 forward, 1 hover, 2 turnToFindWall, 3 turnToAlignToWall,
+   * 4 forwardAlongWall, 5 rotateAroundWall, 6 rotateInCorner, 7 findCorner.
+   */
+  wfState?: number;
+  /** Flight mode at the time: 0 hover, 1 wall right, 2 wall left. */
+  wfMode?: number;
+  /**
    * Heading in degrees, -180..180, or undefined for a flight recorded before
    * the drone could turn.
    *
@@ -907,6 +917,28 @@ export function parseBulkSample(pkt: Uint8Array): BulkSample | null {
   //
   //   15 bytes: header, index, x, y, z, then six ranges      (no heading)
   //   17 bytes: header, index, x, y, z, YAW, then six ranges
+  //   18 bytes: as 17, plus the wall follower's state and the flight mode
+  // 18 bytes: as 17, plus the follower's state packed with the flight mode.
+  // Checked FIRST -- an 18-byte packet also satisfies `length >= 17`, and
+  // falling into that branch would silently drop the state on every sample.
+  if (pkt.length >= 18) {
+    return {
+      index: pkt[1] | (pkt[2] << 8),
+      x: dv.getInt16(3, true),
+      y: dv.getInt16(5, true),
+      z: dv.getInt16(7, true),
+      yaw: dv.getInt16(9, true),
+      front: cm2(pkt[11]),
+      back: cm2(pkt[12]),
+      left: cm2(pkt[13]),
+      right: cm2(pkt[14]),
+      up: cm2(pkt[15]),
+      down: cm2(pkt[16]),
+      wfMode: (pkt[17] >> 4) & 0x0f,
+      wfState: pkt[17] & 0x0f,
+    };
+  }
+
   if (pkt.length >= 17) {
     return {
       index: pkt[1] | (pkt[2] << 8),

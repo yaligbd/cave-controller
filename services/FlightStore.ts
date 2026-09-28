@@ -61,6 +61,15 @@ export interface RawSample {
   up?: number;
   down?: number;
   /**
+   * What the wall follower was doing, from the drone's own recording.
+   *
+   * Absent for a flight that predates the drone storing it, and for any flight
+   * recorded live over BLE -- the phone only sees telemetry, not the
+   * follower's internal state. Only a downloaded flight carries these.
+   */
+  wfState?: number;
+  wfMode?: number;
+  /**
    * Heading in degrees, -180..180. Absent for flights recorded before the
    * drone could turn, where it was always zero anyway.
    */
