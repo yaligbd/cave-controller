@@ -880,6 +880,13 @@ export interface BulkSample {
   /** Flight mode at the time: 0 hover, 1 wall right, 2 wall left. */
   wfMode?: number;
   /**
+   * Worst tilt during the second before this sample, in DEGREES.
+   *
+   * A peak rather than a snapshot: samples are a second apart and a flip takes
+   * a fraction of that, so an instantaneous reading would miss it.
+   */
+  tiltDeg?: number;
+  /**
    * Heading in degrees, -180..180, or undefined for a flight recorded before
    * the drone could turn.
    *
@@ -918,9 +925,31 @@ export function parseBulkSample(pkt: Uint8Array): BulkSample | null {
   //   15 bytes: header, index, x, y, z, then six ranges      (no heading)
   //   17 bytes: header, index, x, y, z, YAW, then six ranges
   //   18 bytes: as 17, plus the wall follower's state and the flight mode
+  //   19 bytes: as 18, plus the worst tilt in the second before the sample
+  // 19 bytes: as 18, plus the worst tilt in the second before the sample.
+  // Longest layouts first: a 19-byte packet satisfies every `length >=` test
+  // below it, so an earlier branch would match and silently drop the newest
+  // field on every sample.
+  if (pkt.length >= 19) {
+    return {
+      index: pkt[1] | (pkt[2] << 8),
+      x: dv.getInt16(3, true),
+      y: dv.getInt16(5, true),
+      z: dv.getInt16(7, true),
+      yaw: dv.getInt16(9, true),
+      front: cm2(pkt[11]),
+      back: cm2(pkt[12]),
+      left: cm2(pkt[13]),
+      right: cm2(pkt[14]),
+      up: cm2(pkt[15]),
+      down: cm2(pkt[16]),
+      wfMode: (pkt[17] >> 4) & 0x0f,
+      wfState: pkt[17] & 0x0f,
+      tiltDeg: pkt[18] * 2,
+    };
+  }
+
   // 18 bytes: as 17, plus the follower's state packed with the flight mode.
-  // Checked FIRST -- an 18-byte packet also satisfies `length >= 17`, and
-  // falling into that branch would silently drop the state on every sample.
   if (pkt.length >= 18) {
     return {
       index: pkt[1] | (pkt[2] << 8),
