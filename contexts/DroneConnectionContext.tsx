@@ -261,7 +261,6 @@ interface DroneContextType {
   disconnectFromDrone: () => Promise<void>;
   setParam: (fullName: string, value: number, typeOverride?: ParamType) => Promise<void>;
   findParam: (name: string) => ParamEntry | undefined;
-  runCrtpProbe: () => Promise<void>;
   logVars: Map<string, LogEntry>;
   logTocProgress: TocProgress;
   logValues: Map<string, number>;
@@ -370,9 +369,6 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   const pidRef = useRef(0);
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Diagnostics only — counts [crtp rx raw] notifications that arrive while
-  // runCrtpProbe() is running, so the probe summary line is accurate.
-  const probeActiveRef = useRef(false);
-  const probeRxCountRef = useRef(0);
 
   // Continuous send/poll loop — see NULL_PACKET comment above.
   const packetQueueRef = useRef<Uint8Array[]>([]);
@@ -1451,38 +1447,6 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
   // channels/protocol-versions known to Bitcraze firmware, to determine
   // whether the drone answers anything at all over this transport. Never
   // throws — every probe is best-effort and failures are logged, not raised.
-  const runCrtpProbe = async () => {
-    const device = deviceRef.current;
-    if (!device) {
-      console.log('[probe] not connected — aborting');
-      return;
-    }
-
-    const probes: { description: string; packet: Uint8Array }[] = [
-      { description: 'Param TOC info, v2 protocol', packet: new Uint8Array([0x2c, 0x03]) },
-      { description: 'Param TOC info, v1 protocol', packet: new Uint8Array([0x2c, 0x01]) },
-      { description: 'Param TOC item 0, v2', packet: new Uint8Array([0x2c, 0x02, 0x00, 0x00]) },
-      { description: 'Param TOC item 0, v1', packet: new Uint8Array([0x2c, 0x00, 0x00, 0x00]) },
-      { description: 'Log TOC info, v2', packet: new Uint8Array([0x5c, 0x03]) },
-      { description: 'Link echo, port 15 channel 0', packet: new Uint8Array([0xfc, 0x01, 0x02, 0x03]) },
-      { description: 'Platform version, port 13 ch 0', packet: new Uint8Array([0xdc, 0x00]) },
-      { description: 'Link source (port 15, channel 1)', packet: new Uint8Array([0xfd, 0x00]) },
-      { description: 'Safelink enable (port 15, channel 3)', packet: new Uint8Array([0xff, 0x05, 0x01]) },
-    ];
-
-    probeRxCountRef.current = 0;
-    probeActiveRef.current = true;
-
-    for (let i = 0; i < probes.length; i++) {
-      const { description, packet } = probes[i];
-      console.log(`[probe ${i + 1}] ${description}, tx = ${toHex(packet)}`);
-      sendPacket(packet);
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-    }
-
-    probeActiveRef.current = false;
-    console.log(`[probe] complete, received ${probeRxCountRef.current} notifications total`);
-  };
 
   const cleanupConnection = () => {
     stopPolling();
@@ -1592,7 +1556,6 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
           const frame = base64ToBytes(characteristic?.value ?? '');
           if (CRTP_DEBUG) console.log(`[crtp rx notif] byteLength=${frame.length} bytes=${toHex(frame)}`);
           if (CRTP_DEBUG) console.log(`[crtp rx raw] ${toHex(frame)}`);
-          if (probeActiveRef.current) probeRxCountRef.current += 1;
 
           if (!characteristic?.value) return;
 
@@ -1816,7 +1779,6 @@ withTocRetry(() => fetchParamToc().then(() => fetchLogToc()))
         disconnectFromDrone,
         setParam,
         findParam,
-        runCrtpProbe,
         logVars,
         logTocProgress,
         logValues,

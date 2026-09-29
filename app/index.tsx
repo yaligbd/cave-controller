@@ -143,7 +143,6 @@ export default function ConnectScreen() {
     scanForDrone,
     disconnectFromDrone,
     findParam,
-    runCrtpProbe,
     logValues, selftestPassed} = useDroneConnection();
 
   const fetching = tocProgress.total > 0 && tocProgress.loaded < tocProgress.total;
@@ -222,18 +221,6 @@ export default function ConnectScreen() {
             {isConnected ? 'Disconnect' : 'Connect'}
           </Text>
         </TouchableOpacity>
-
-        {isConnected && (
-          <TouchableOpacity
-            style={[
-              localStyles.connectButton,
-              { borderColor: palette.warn, backgroundColor: alpha(palette.warn, 0.12) },
-            ]}
-            onPress={() => runCrtpProbe()}
-          >
-            <Text style={[localStyles.connectButtonText, { color: palette.warn }]}>RUN CRTP PROBE</Text>
-          </TouchableOpacity>
-        )}
 
         <View style={localStyles.panel}>
           <Text style={localStyles.microLabel}>Hardware Checklist</Text>

@@ -8,13 +8,49 @@ import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import React, { useEffect } from 'react';
 import 'react-native-reanimated';
 
-import { ActivityIndicator, I18nManager, View } from 'react-native';
+import { ActivityIndicator, I18nManager, LogBox, View } from 'react-native';
 
 // This app has no RTL-specific layouts. Force LTR so text and layout render
 // consistently on devices set to an RTL locale (Hebrew, Arabic) instead of
 // mirroring the whole UI.
 I18nManager.allowRTL(false);
 I18nManager.forceRTL(false);
+
+// Keep OUR OWN diagnostics out of React Native's dev overlay.
+//
+// LogBox turns every console.error() into a red bar across the bottom of the
+// screen and every console.warn() into a yellow one. That is useful for a React
+// mistake. It is actively harmful here, because the things it was catching are
+// not UI bugs -- they are a drone that went out of range, a log block that needs
+// rebuilding, a download worth retrying. Normal events in a flight.
+//
+// And the overlay is the worst possible way to show them: it truncates to about
+// forty characters ("[drone] CRTP write failed: Error: CRTP writ..."), it covers
+// the flight controls at the bottom of the mission screen, and it appears while
+// the aircraft is in the air. A single disconnect produces several -- one per
+// log block, four seconds later, as the blocks notice the drone has gone.
+//
+// Converting the thirty-odd call sites one at a time would mean that many more
+// edits to flight-critical files for no change in behaviour. Every message we
+// write is prefixed, so filtering by prefix catches all of them at once,
+// including the ones not yet converted. Everything that matters already reaches
+// the Logs screen with its full text and what to do about it, and everything
+// still reaches Metro for a laptop.
+//
+// A genuine React error -- a component that throws, a bad hook call -- has no
+// such prefix and still appears loudly, which is what the overlay is for.
+LogBox.ignoreLogs([
+  /^\[drone\]/,
+  /^\[flight\]/,
+  /^\[flights\]/,
+  /^\[download\]/,
+  /^\[crtp/,
+  /^\[ble\]/,
+  /^\[log/,
+  /^\[toc-cache\]/,
+  /^\[theme\]/,
+  /^\[settings\]/,
+]);
 
 // Routes reachable without an account.
 const PUBLIC_ROUTES = ['/login', '/signup'];
