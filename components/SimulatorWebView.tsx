@@ -122,8 +122,12 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
         #empty { position: absolute; inset: 0; display: flex; align-items: center;
                  justify-content: center; color: #7D8C9A; font-size: 12px; z-index: 3; }
       </style>
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/controls/OrbitControls.js"></script>
+      <!-- unpkg, NOT cdnjs. cdnjs hosts three's build output only, so
+           examples/js/controls/OrbitControls.js 404s there and THREE.OrbitControls
+           is never defined -- "not a constructor", and a blank 3D view. Changing
+           this CDN broke the whole page once already. -->
+      <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+      <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     </head>
     <body>
       <div id="canvas-container"></div>
