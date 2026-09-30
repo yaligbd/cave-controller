@@ -4,6 +4,8 @@ import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { DialogProvider } from '@/contexts/DialogContext';
 import { DroneConnectionProvider } from '@/contexts/DroneConnectionContext';
+import { loadLog } from '@/services/ErrorLog';
+import { loadPrefs } from '@/services/Prefs';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import React, { useEffect } from 'react';
 import 'react-native-reanimated';
@@ -114,6 +116,13 @@ function RootLayoutContent() {
 }
 
 export default function RootLayout() {
+  // Preferences first, then the fault log -- the log has to know whether it is
+  // allowed to read itself back before it tries. Both failing is survivable:
+  // the defaults stand and the log starts empty.
+  useEffect(() => {
+    void loadPrefs().then(() => loadLog());
+  }, []);
+
   return (
     <ThemeProvider>
       <RootLayoutContent />

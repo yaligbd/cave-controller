@@ -2,20 +2,16 @@
 //  SAFE TO CHANGE WITHOUT THE DRONE.
 // ===========================================================================
 //
-// This file only reads flight data that has already been recorded and saved.
-// Nothing here can stop the drone flying, send it a command, or corrupt what
-// it stores. Break it and the worst case is a screen that looks wrong.
+// This file only draws data that has already been recorded. Nothing here can
+// stop the drone flying, send it a command, or corrupt what it stores. Break it
+// and the worst case is a screen that looks wrong.
 //
-// This is the right place to work while the drone is unavailable. The 3D view,
-// the flight cards, the measurements table and the summary numbers can all be
-// developed against flights already on the phone.
+// TWO THINGS ABOUT THE DATA, both learned the hard way:
 //
-// Two things it is worth knowing about the data itself:
-//
-//   Positions (posX/posY/posZ) are the drone's own estimate in metres. They are
-//   real. An older version dead-reckoned a fake straight line here, which made
-//   every flight look identical; if a path ever looks suspiciously tidy, check
-//   that the real positions are actually present rather than being fallen back
+//   Positions (posX/posY/posZ) are the drone's own estimate, in metres, and
+//   they are real. An older version dead-reckoned a fake straight line here,
+//   which made every flight look identical. If a path ever looks suspiciously
+//   tidy, check the real positions are present rather than being fallen back
 //   from.
 //
 //   yaw is the heading in degrees and it is what places the wall readings. A
@@ -26,9 +22,17 @@
 //   was fiction. Flights recorded before that fix have yaw 0 throughout and
 //   will always look flat; that is the recording, not the renderer.
 //
-// The files that CAN stop the drone flying are marked FLIGHT-CRITICAL at the
-// top: services/CrtpService.ts, services/TocCache.ts,
-// contexts/DroneConnectionContext.tsx and app/mission.tsx.
+// WHY THIS VIEW WAS REBUILT. The old one drew all six rays from every sample at
+// once. Fifty samples is three hundred lines, most of them crossing the whole
+// room, and the up-rays in particular drew a two-metre blue curtain over
+// everything. The result was a scribble you could not read a room out of.
+//
+// So the drawing is split in two. The WALLS are the ray endpoints -- each one a
+// place a laser actually hit something -- drawn as a dim point cloud, because
+// points accumulate into surfaces while lines just overlap. The RAYS belong to
+// one moment: only the sample being played back draws them, brightly. Scrub
+// through the flight and you see what the drone saw, when it saw it, instead of
+// everything it ever saw piled on top of itself.
 // ===========================================================================
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -64,8 +68,8 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
       }
     }
   }, [livePoint, isFullscreen]);
-  
-  const serializedData = JSON.stringify(flightData);
+
+  const serializedData = JSON.stringify(flightData ?? null);
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -73,315 +77,446 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
     <head>
       <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
       <style>
-        body { margin: 0; padding: 0; overflow: hidden; background-color: #0B0E11; color: white; touch-action: none; }
-        #canvas-container { width: 100vw; height: 100vh; }
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #0B0E11; color: #E8EDF2;
+               font-family: monospace; touch-action: none; }
+        #canvas-container { position: absolute; inset: 0; }
 
-        /* Legend. The rays were six different colours with nothing anywhere
-           saying which was which, so the most informative part of the view was
-           unreadable. Positioned bottom-left to stay clear of the FULLSCREEN
-           button in the app's own chrome. */
-        #legend {
-          position: absolute; bottom: 10px; left: 10px;
-          font: 11px ui-monospace, Menlo, Consolas, monospace;
-          color: #C7D0D9;
-          background: rgba(11,14,17,0.78);
-          border: 1px solid #1E262E; border-radius: 6px;
-          padding: 8px 10px; line-height: 1.55;
-          pointer-events: none;
+        .panel {
+          position: absolute;
+          background: rgba(11,14,17,0.82);
+          border: 1px solid #1E262E;
+          border-radius: 4px;
+          padding: 8px 10px;
+          font-size: 10px;
+          line-height: 1.5;
+          z-index: 4;
         }
-        #legend .sw {
-          display: inline-block; width: 9px; height: 9px;
-          border-radius: 2px; margin-right: 6px; vertical-align: -1px;
-        }
-        #legend .hd { color: #7D8C9A; letter-spacing: 1px; margin-bottom: 4px; }
-        #legend .cols { display: flex; gap: 14px; }
+
+        /* Sensor readout. Each row is the distance AND a bar as long as that
+           distance is, relative to the longest reading on screen -- so the six
+           can be compared at a glance instead of read one number at a time. */
+        #hud { top: 8px; left: 8px; min-width: 150px; }
+        #hud .ttl { color: #7D8C9A; letter-spacing: 1px; }
+        #hud .big { font-size: 13px; font-weight: bold; }
+        .row { display: flex; align-items: center; gap: 5px; margin-top: 2px; }
+        .sw { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+        .nm { width: 34px; color: #7D8C9A; flex: none; }
+        .vl { width: 46px; text-align: right; flex: none; }
+        .bar { height: 4px; border-radius: 2px; flex: none; opacity: 0.85; }
+
+        /* Playback. Sits along the bottom clear of the legend. */
+        #controls { bottom: 8px; left: 8px; right: 8px; display: flex;
+                    align-items: center; gap: 8px; }
+        #play { background: #1A222A; color: #E8EDF2; border: 1px solid #3A8FCC;
+                border-radius: 3px; font-family: monospace; font-size: 12px;
+                padding: 4px 9px; flex: none; }
+        #scrub { flex: 1; min-width: 40px; accent-color: #3A8FCC; }
+        #spd { background: #1A222A; color: #E8EDF2; border: 1px solid #2A343E;
+               border-radius: 3px; font-family: monospace; font-size: 11px;
+               padding: 4px 6px; flex: none; }
+
+        #legend { bottom: 44px; left: 8px; }
+        #legend .g { display: grid; grid-template-columns: auto auto; gap: 1px 10px; }
+        #legend div { display: flex; align-items: center; gap: 5px; }
+        #scale { bottom: 44px; right: 8px; color: #7D8C9A; text-align: right; }
+        #empty { position: absolute; inset: 0; display: flex; align-items: center;
+                 justify-content: center; color: #7D8C9A; font-size: 12px; z-index: 3; }
       </style>
-      <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
-      <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/controls/OrbitControls.js"></script>
     </head>
     <body>
       <div id="canvas-container"></div>
-      <div id="legend">
-        <div class="hd">WALL DISTANCE</div>
-        <div class="cols">
-          <div>
-            <div><span class="sw" style="background:#30d158"></span>FRONT</div>
-            <div><span class="sw" style="background:#e5484d"></span>BACK</div>
-            <div><span class="sw" style="background:#ff9f0a"></span>LEFT</div>
-          </div>
-          <div>
-            <div><span class="sw" style="background:#bf5af2"></span>RIGHT</div>
-            <div><span class="sw" style="background:#5ac8fa"></span>UP</div>
-            <div><span class="sw" style="background:#ffd60a"></span>DOWN</div>
-          </div>
-        </div>
-        <div class="hd" style="margin:6px 0 0">WHITE LINE = FLIGHT PATH</div>
+
+      <div id="hud" class="panel">
+        <div class="ttl">T <span id="t" class="big">0.0</span>s &nbsp; ALT <span id="alt" class="big">0</span>mm</div>
+        <div id="sensors"></div>
       </div>
+
+      <div id="legend" class="panel">
+        <div class="g">
+          <div><span class="sw" style="background:#30d158"></span>FRONT</div>
+          <div><span class="sw" style="background:#bf5af2"></span>RIGHT</div>
+          <div><span class="sw" style="background:#e5484d"></span>BACK</div>
+          <div><span class="sw" style="background:#5ac8fa"></span>UP</div>
+          <div><span class="sw" style="background:#ff9f0a"></span>LEFT</div>
+          <div><span class="sw" style="background:#ffd60a"></span>DOWN</div>
+        </div>
+        <div style="color:#7D8C9A;margin-top:4px">white line = flight path</div>
+      </div>
+
+      <div id="scale" class="panel">grid square = 1 m</div>
+
+      <div id="controls" class="panel">
+        <button id="play">&#9654;</button>
+        <input id="scrub" type="range" min="0" max="0" value="0" step="1" />
+        <select id="spd">
+          <option value="1">1x</option>
+          <option value="2">2x</option>
+          <option value="4">4x</option>
+        </select>
+      </div>
+
       <script>
         try {
-          const flightData = ${serializedData};
-          
-          const scene = new THREE.Scene();
+          var flightData = ${serializedData};
+
+          var scene = new THREE.Scene();
           scene.background = new THREE.Color(0x0b0e11);
 
-          const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-          
-          const renderer = new THREE.WebGLRenderer({ antialias: true });
+          var camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+          var renderer = new THREE.WebGLRenderer({ antialias: true });
           renderer.setSize(window.innerWidth, window.innerHeight);
           document.getElementById('canvas-container').appendChild(renderer.domElement);
 
-          const controls = new THREE.OrbitControls(camera, renderer.domElement);
+          var controls = new THREE.OrbitControls(camera, renderer.domElement);
           controls.enableDamping = true;
           controls.dampingFactor = 0.05;
 
-          const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-          scene.add(ambientLight);
-          
-          const gridHelper = new THREE.GridHelper(30, 30, 0x1A222A, 0x1E262E);
-          scene.add(gridHelper);
+          scene.add(new THREE.AmbientLight(0xffffff, 0.8));
 
-          const pathPoints = [];
-          let currentX = 0;
-          let currentY = 0;
-          const raysGroup = new THREE.Group();
-          scene.add(raysGroup);
+          // One grid square is one metre, and the panel bottom-right says so.
+          // Without a stated scale a 2m arena and a 20m corridor draw
+          // identically, which is most of why these pictures were hard to read.
+          scene.add(new THREE.GridHelper(30, 30, 0x1A222A, 0x1E262E));
 
-          const colors = {
-            front: 0x30d158, back: 0xe5484d, left: 0xff9f0a, 
+          var colors = {
+            front: 0x30d158, back: 0xe5484d, left: 0xff9f0a,
             right: 0xbf5af2, up: 0x5ac8fa, down: 0xffd60a
           };
+          var cssColors = {
+            front: '#30d158', back: '#e5484d', left: '#ff9f0a',
+            right: '#bf5af2', up: '#5ac8fa', down: '#ffd60a'
+          };
+          var ORDER = ['front', 'back', 'left', 'right', 'up', 'down'];
 
-          let lastValidP3D = new THREE.Vector3(0,0,0);
-          let pathLine = null;
+          // --- the drone -----------------------------------------------------
+          //
+          // A ball has no orientation, so there was no way to tell which way
+          // FRONT pointed. This is the Crazyflie's actual X layout, and the two
+          // front arms are the FRONT sensor's green while the rear pair are the
+          // BACK sensor's red -- so heading is readable from any camera angle,
+          // and it matches the rays.
+          var droneMesh = new THREE.Group();
+          var bodyMat  = new THREE.MeshBasicMaterial({ color: 0x24303B });
+          var frontMat = new THREE.MeshBasicMaterial({ color: colors.front });
+          var backMat  = new THREE.MeshBasicMaterial({ color: colors.back });
+          var rotorMat = new THREE.MeshBasicMaterial({ color: 0xE8EDF2, transparent: true, opacity: 0.45 });
 
-          if (flightData && flightData.time) {
-            const length = flightData.time.length;
-            for (let i = 0; i < length; i++) {
-              const t = flightData.time[i];
-              const yawRad = (flightData.yaw[i] || 0) * (Math.PI / 180);
-              
-              // Use the drone's OWN position when we have it.
-              //
-              // The fallback below dead-reckons: it assumes the drone always
-              // flies forward at 1.5 m/s along its yaw. Yaw is recorded as 0,
-              // so cos(0)=1 and it marched +1.5m in X every second -- drawing a
-              // straight 36-metre diagonal for a 24-second hover in place. Every
-              // flight looked identical and none of them looked like reality.
-              // It is kept only for flights saved before positions were stored.
-              const hasRealPos =
-                flightData.posX && flightData.posY && flightData.posZ &&
-                flightData.posX.length === length;
+          droneMesh.add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.07, 0.16), bodyMat));
 
-              let p3d;
-              if (hasRealPos) {
-                // three.js is Y-up; the drone reports Z-up. So the drone's Z
-                // becomes the scene's Y, and the drone's Y becomes the scene's Z.
-                //
-                // AND THE DRONE'S Y IS NEGATED. That minus sign is not a fudge,
-                // it is the whole difference between a map and its reflection.
-                //
-                // Swapping two axes of a right-handed frame produces a LEFT-
-                // handed one, and a left-handed scene is drawn mirrored. Every
-                // ray stayed consistent with the path, so nothing looked broken
-                // -- but a wall the drone had on its right was drawn on its
-                // left, which is exactly what a flight along a right-hand wall
-                // showed. Negating one axis restores the handedness and un-
-                // mirrors the whole scene, path and rays together.
-                //
-                // Every direction below therefore uses scene Z = -(drone y):
-                //   forward  ( cos yaw, 0, -sin yaw)
-                //   left     (-sin yaw, 0, -cos yaw)
-                p3d = new THREE.Vector3(
-                  flightData.posX[i],
-                  flightData.posZ[i],
-                  -flightData.posY[i]
-                );
-              } else {
-                if (i > 0) {
-                  const dt = t - flightData.time[i-1];
-                  currentX += Math.cos(yawRad) * 1.5 * dt;
-                  currentY += Math.sin(yawRad) * 1.5 * dt;
-                }
-                p3d = new THREE.Vector3(currentX, (flightData.downSensor[i] || 0), -currentY);
-              }
-              pathPoints.push(p3d);
-              lastValidP3D = p3d;
-
-              const sensorRays = [
-                { val: flightData.frontSensor[i], dir: new THREE.Vector3(Math.cos(yawRad), 0, -Math.sin(yawRad)), col: colors.front },
-                { val: flightData.backSensor[i], dir: new THREE.Vector3(-Math.cos(yawRad), 0, Math.sin(yawRad)), col: colors.back },
-                { val: flightData.leftSensor[i], dir: new THREE.Vector3(-Math.sin(yawRad), 0, -Math.cos(yawRad)), col: colors.left },
-                { val: flightData.rightSensor[i], dir: new THREE.Vector3(Math.sin(yawRad), 0, Math.cos(yawRad)), col: colors.right },
-                { val: flightData.TopSensor[i], dir: new THREE.Vector3(0, 1, 0), col: colors.up },
-                // Down was measured all along and never drawn. Without it the
-                // drone appears to float with nothing below, and the height
-                // above the actual floor is invisible.
-                { val: (flightData.downSensor || [])[i], dir: new THREE.Vector3(0, -1, 0), col: colors.down }
-              ];
-
-              sensorRays.forEach(ray => {
-                if (ray.val && ray.val < 15.0) {
-                  const endpoint = p3d.clone().add(ray.dir.multiplyScalar(ray.val));
-                  const lineGeo = new THREE.BufferGeometry().setFromPoints([p3d, endpoint]);
-                  const lineMat = new THREE.LineBasicMaterial({ color: ray.col, transparent: true, opacity: 0.3 });
-                  raysGroup.add(new THREE.Line(lineGeo, lineMat));
-                  
-                  const dotGeo = new THREE.SphereGeometry(0.05, 4, 4);
-                  const dotMat = new THREE.MeshBasicMaterial({ color: ray.col });
-                  const dot = new THREE.Mesh(dotGeo, dotMat);
-                  dot.position.copy(endpoint);
-                  scene.add(dot);
-                }
-              });
-            }
-
-            if (pathPoints.length > 1) {
-              const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
-              const pathMaterial = new THREE.LineBasicMaterial({ color: 0xE8EDF2, linewidth: 2 });
-              pathLine = new THREE.Line(pathGeometry, pathMaterial);
-              scene.add(pathLine);
-              
-              // Frame the camera to the SIZE of the flight, not a fixed
-              // distance from it.
-              //
-              // The camera used to sit 10m out on each axis regardless. A
-              // wall-following flight spans metres, so that happened to look
-              // right -- but a hover spans centimetres, and the same camera
-              // showed a speck lost in an empty grid. That is why hover
-              // "didn't make sense" while the following flights looked fine:
-              // the data was correct both times, the view only fitted one of
-              // them.
-              //
-              // Measuring the path's own extent and backing off proportionally
-              // frames any flight. The 1.5m floor stops a hover being zoomed in
-              // so far that a few centimetres of ordinary drift fill the screen
-              // and look like wild flying.
-              const box = new THREE.Box3().setFromPoints(pathPoints);
-              const centre = box.getCenter(new THREE.Vector3());
-              const size = box.getSize(new THREE.Vector3());
-              const extent = Math.max(size.x, size.y, size.z, 1.5);
-
-              controls.target.copy(centre);
-              camera.position.set(
-                centre.x + extent * 1.6,
-                centre.y + extent * 1.2 + 1.0,
-                centre.z + extent * 1.6
-              );
-              camera.lookAt(centre);
-            }
-          }
-
-          // A drone, not a sphere. A ball has no orientation, so there was no
-          // way to tell which way FRONT pointed -- which made the coloured rays
-          // much harder to read than they needed to be.
-          const droneMesh = new THREE.Group();
-
-          const bodyMat  = new THREE.MeshBasicMaterial({ color: 0x3A8FCC });
-          const armMat   = new THREE.MeshBasicMaterial({ color: 0x7D8C9A });
-          const rotorMat = new THREE.MeshBasicMaterial({ color: 0xE8EDF2, transparent: true, opacity: 0.55 });
-          // The nose is the FRONT sensor's colour, so which way the drone faces
-          // is readable at a glance and matches the green ray.
-          const noseMat  = new THREE.MeshBasicMaterial({ color: colors.front });
-
-          const body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.22), bodyMat);
-          droneMesh.add(body);
-
-          const nose = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 8), noseMat);
-          nose.rotation.z = -Math.PI / 2;   // point along +X, the FRONT direction
-          nose.position.set(0.16, 0, 0);
+          var nose = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.13, 8), frontMat);
+          nose.rotation.z = -Math.PI / 2;      // point along +X, which is FRONT
+          nose.position.set(0.14, 0, 0);
           droneMesh.add(nose);
 
-          // Four arms and rotors in an X, the Crazyflie's actual layout.
+          var rotors = [];
           [[1,1],[1,-1],[-1,1],[-1,-1]].forEach(function (c) {
-            const ax = c[0] * 0.13, az = c[1] * 0.13;
-            const arm = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.02, 0.02), armMat);
+            var ax = c[0] * 0.13, az = c[1] * 0.13;
+            var arm = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.018, 0.018),
+                                     c[0] > 0 ? frontMat : backMat);
             arm.position.set(ax / 2, 0, az / 2);
             arm.rotation.y = -Math.atan2(az, ax);
             droneMesh.add(arm);
 
-            const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.012, 16), rotorMat);
-            rotor.position.set(ax, 0.03, az);
+            var rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.01, 14), rotorMat);
+            rotor.position.set(ax, 0.028, az);
             droneMesh.add(rotor);
+            rotors.push(rotor);
           });
-
-          droneMesh.position.copy(lastValidP3D);
           scene.add(droneMesh);
-          
-          if (!flightData || !flightData.time) {
-            camera.position.set(5, 5, 5);
-            controls.target.set(0, 0, 0);
+
+          // --- building the flight -------------------------------------------
+          //
+          // Drone (x, y, z) maps to scene (x, z, -y).
+          //
+          // three.js is Y-up and the drone is Z-up, so the drone's Z becomes the
+          // scene's Y. AND THE DRONE'S Y IS NEGATED. That minus is not a fudge,
+          // it is the difference between a map and its reflection: swapping two
+          // axes of a right-handed frame produces a left-handed one, which draws
+          // mirrored. Every ray stayed consistent with the path so nothing
+          // looked broken -- but a wall the drone had on its right came out on
+          // its left. Negating one axis restores the handedness.
+          //
+          // Every direction below therefore uses scene Z = -(drone y):
+          //   forward  ( cos yaw, 0, -sin yaw)
+          //   left     (-sin yaw, 0, -cos yaw)
+          function rayDirs(yawRad) {
+            return {
+              front: new THREE.Vector3(Math.cos(yawRad), 0, -Math.sin(yawRad)),
+              back:  new THREE.Vector3(-Math.cos(yawRad), 0, Math.sin(yawRad)),
+              left:  new THREE.Vector3(-Math.sin(yawRad), 0, -Math.cos(yawRad)),
+              right: new THREE.Vector3(Math.sin(yawRad), 0, Math.cos(yawRad)),
+              up:    new THREE.Vector3(0, 1, 0),
+              down:  new THREE.Vector3(0, -1, 0)
+            };
           }
 
-          window.pushLivePoint = function(pt) {
-            // Drone (x,y,z) -> scene (x, z, -y). The minus keeps the scene
-            // right-handed; without it the whole view is mirrored. See the long
-            // note on the same mapping above.
-            const p3d = new THREE.Vector3(pt.x, pt.z, -pt.y);
+          var samples = [];       // one entry per recorded moment
+          var pathPoints = [];
+          var pathLine = null;
+          var liveRays = new THREE.Group();   // only ever the current sample
+          scene.add(liveRays);
+
+          function addSample(p3d, yawDeg, s, t) {
+            samples.push({ p: p3d, yaw: yawDeg, s: s, t: t });
             pathPoints.push(p3d);
-            lastValidP3D = p3d;
+          }
+
+          if (flightData && flightData.time && flightData.time.length) {
+            var n = flightData.time.length;
+            var hasPos = !!(flightData.posX && flightData.posY && flightData.posZ &&
+                            flightData.posX.length === n);
+            var wallPts = [];
+            var wallCols = [];
+
+            for (var i = 0; i < n; i++) {
+              var yawDeg = flightData.yaw && flightData.yaw[i] ? flightData.yaw[i] : 0;
+              var p3d;
+              if (hasPos) {
+                p3d = new THREE.Vector3(flightData.posX[i], flightData.posZ[i], -flightData.posY[i]);
+              } else {
+                // No recorded position. Keep it at the origin rather than
+                // inventing a path: a flight drawn from a guess is worse than a
+                // flight drawn as a dot, because it looks convincing.
+                p3d = new THREE.Vector3(0, 0.5, 0);
+              }
+
+              var s = {
+                front: flightData.frontSensor ? flightData.frontSensor[i] : 0,
+                back:  flightData.backSensor  ? flightData.backSensor[i]  : 0,
+                left:  flightData.leftSensor  ? flightData.leftSensor[i]  : 0,
+                right: flightData.rightSensor ? flightData.rightSensor[i] : 0,
+                up:    flightData.TopSensor   ? flightData.TopSensor[i]   : 0,
+                down:  flightData.downSensor  ? flightData.downSensor[i]  : 0
+              };
+              addSample(p3d, yawDeg, s, flightData.time[i]);
+
+              // The WALLS. Only the four horizontal sensors contribute: up is
+              // the ceiling and down is the floor, and including them buried the
+              // room under a curtain of points at two fixed heights.
+              var dirs = rayDirs(yawDeg * Math.PI / 180);
+              ['front', 'back', 'left', 'right'].forEach(function (k) {
+                var v = s[k];
+                if (v > 0 && v < 15.0) {
+                  var e = p3d.clone().add(dirs[k].clone().multiplyScalar(v));
+                  wallPts.push(e.x, e.y, e.z);
+                  var c = new THREE.Color(colors[k]);
+                  wallCols.push(c.r, c.g, c.b);
+                }
+              });
+            }
+
+            if (wallPts.length) {
+              var wg = new THREE.BufferGeometry();
+              wg.setAttribute('position', new THREE.Float32BufferAttribute(wallPts, 3));
+              wg.setAttribute('color', new THREE.Float32BufferAttribute(wallCols, 3));
+              scene.add(new THREE.Points(wg, new THREE.PointsMaterial({
+                size: 0.06, vertexColors: true, transparent: true, opacity: 0.85
+              })));
+            }
 
             if (pathPoints.length > 1) {
-              if (pathLine) scene.remove(pathLine);
-              const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
-              const pathMaterial = new THREE.LineBasicMaterial({ color: 0x30d158, linewidth: 3 });
-              pathLine = new THREE.Line(pathGeometry, pathMaterial);
+              pathLine = new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints(pathPoints),
+                new THREE.LineBasicMaterial({ color: 0xE8EDF2 }));
               scene.add(pathLine);
             }
-            
-            droneMesh.position.copy(p3d);
 
-            const yawRad = pt.yaw * (Math.PI / 180);
-            const sensorRays = [
-              { val: pt.sensors.front, dir: new THREE.Vector3(Math.cos(yawRad), 0, -Math.sin(yawRad)), col: colors.front },
-              { val: pt.sensors.back, dir: new THREE.Vector3(-Math.cos(yawRad), 0, Math.sin(yawRad)), col: colors.back },
-              { val: pt.sensors.left, dir: new THREE.Vector3(-Math.sin(yawRad), 0, -Math.cos(yawRad)), col: colors.left },
-              { val: pt.sensors.right, dir: new THREE.Vector3(Math.sin(yawRad), 0, Math.cos(yawRad)), col: colors.right },
-              { val: pt.sensors.up, dir: new THREE.Vector3(0, 1, 0), col: colors.up },
-              { val: pt.sensors.down, dir: new THREE.Vector3(0, -1, 0), col: colors.down }
-            ];
+            // Frame the flight rather than a fixed distance, with a 1.5m floor
+            // so a hover is not zoomed in until ordinary drift fills the screen
+            // and looks like wild flying.
+            var box = new THREE.Box3().setFromPoints(pathPoints);
+            var centre = box.getCenter(new THREE.Vector3());
+            var size = box.getSize(new THREE.Vector3());
+            var extent = Math.max(size.x, size.y, size.z, 1.5);
+            controls.target.copy(centre);
+            camera.position.set(centre.x + extent * 1.5,
+                                centre.y + extent * 1.1 + 1.0,
+                                centre.z + extent * 1.5);
+            camera.lookAt(centre);
+          } else {
+            camera.position.set(4, 4, 4);
+            controls.target.set(0, 0, 0);
+            var e = document.createElement('div');
+            e.id = 'empty';
+            e.textContent = 'no flight loaded';
+            document.body.appendChild(e);
+          }
 
-            sensorRays.forEach(ray => {
-              if (ray.val > 0 && ray.val < 15.0) {
-                const endpoint = p3d.clone().add(ray.dir.multiplyScalar(ray.val));
-                const lineGeo = new THREE.BufferGeometry().setFromPoints([p3d, endpoint]);
-                const lineMat = new THREE.LineBasicMaterial({ color: ray.col, transparent: true, opacity: 0.3 });
-                raysGroup.add(new THREE.Line(lineGeo, lineMat));
-                
-                const dotGeo = new THREE.SphereGeometry(0.05, 4, 4);
-                const dotMat = new THREE.MeshBasicMaterial({ color: ray.col });
-                const dot = new THREE.Mesh(dotGeo, dotMat);
-                dot.position.copy(endpoint);
-                scene.add(dot);
+          // --- the readout ----------------------------------------------------
+          //
+          // Numbers AND a bar, because six numbers in a column do not tell you
+          // at a glance that the left wall is half as far as the right one. Each
+          // bar is drawn as a fraction of the longest reading in that sample, so
+          // the six are directly comparable.
+          var sensorsEl = document.getElementById('sensors');
+          var rowEls = {};
+          ORDER.forEach(function (k) {
+            var row = document.createElement('div');
+            row.className = 'row';
+            row.innerHTML =
+              '<span class="sw" style="background:' + cssColors[k] + '"></span>' +
+              '<span class="nm">' + k.toUpperCase() + '</span>' +
+              '<span class="vl"></span>' +
+              '<span class="bar" style="background:' + cssColors[k] + '"></span>';
+            sensorsEl.appendChild(row);
+            rowEls[k] = { val: row.children[2], bar: row.children[3] };
+          });
+
+          var MAX_BAR_PX = 54;
+
+          function showSample(idx) {
+            if (!samples.length) return;
+            if (idx < 0) idx = 0;
+            if (idx >= samples.length) idx = samples.length - 1;
+            var sm = samples[idx];
+
+            droneMesh.position.copy(sm.p);
+            // Scene yaw turns the opposite way to the drone's, because the Y
+            // axis was negated to un-mirror the scene.
+            droneMesh.rotation.y = -sm.yaw * Math.PI / 180;
+
+            while (liveRays.children.length) liveRays.remove(liveRays.children[0]);
+            var dirs = rayDirs(sm.yaw * Math.PI / 180);
+
+            var longest = 0;
+            ORDER.forEach(function (k) {
+              var v = sm.s[k];
+              if (v > 0 && v < 15.0 && v > longest) longest = v;
+            });
+            if (longest <= 0) longest = 1;
+
+            ORDER.forEach(function (k) {
+              var v = sm.s[k];
+              var el = rowEls[k];
+              if (v > 0 && v < 15.0) {
+                el.val.textContent = Math.round(v * 1000) + 'mm';
+                el.bar.style.width = Math.max(2, Math.round(MAX_BAR_PX * v / longest)) + 'px';
+                el.bar.style.opacity = '0.85';
+
+                var end = sm.p.clone().add(dirs[k].clone().multiplyScalar(v));
+                liveRays.add(new THREE.Line(
+                  new THREE.BufferGeometry().setFromPoints([sm.p, end]),
+                  new THREE.LineBasicMaterial({ color: colors[k] })));
+                var dot = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6),
+                                         new THREE.MeshBasicMaterial({ color: colors[k] }));
+                dot.position.copy(end);
+                liveRays.add(dot);
+              } else {
+                // 0 means the laser saw nothing, which at these ranges means far
+                // away, not touching. Saying so beats drawing a wall at zero.
+                el.val.textContent = '--';
+                el.bar.style.width = '0px';
+                el.bar.style.opacity = '0.15';
               }
             });
-            
-            controls.target.copy(p3d);
-          };
 
-          // Handle device rotation or fullscreen transitions
-          window.addEventListener('resize', () => {
+            document.getElementById('t').textContent = (sm.t != null ? Number(sm.t).toFixed(1) : idx);
+            document.getElementById('alt').textContent = Math.round(sm.p.y * 1000);
+            document.getElementById('scrub').value = idx;
+          }
+
+          // --- playback -------------------------------------------------------
+          var playing = false;
+          var cursor = 0;
+          var speed = 1;
+          var lastTick = 0;
+          var SAMPLE_MS = 1000;   // the drone records once a second
+
+          var scrub = document.getElementById('scrub');
+          var playBtn = document.getElementById('play');
+
+          scrub.max = Math.max(0, samples.length - 1);
+          scrub.addEventListener('input', function () {
+            playing = false;
+            playBtn.innerHTML = '&#9654;';
+            cursor = parseInt(scrub.value, 10) || 0;
+            showSample(cursor);
+          });
+
+          playBtn.addEventListener('click', function () {
+            if (!samples.length) return;
+            playing = !playing;
+            // Starting from the end replays from the beginning, which is what
+            // pressing play on a finished flight is asking for.
+            if (playing && cursor >= samples.length - 1) cursor = 0;
+            playBtn.innerHTML = playing ? '&#10073;&#10073;' : '&#9654;';
+            lastTick = performance.now();
+          });
+
+          document.getElementById('spd').addEventListener('change', function (e) {
+            speed = parseFloat(e.target.value) || 1;
+          });
+
+          function animate(now) {
+            requestAnimationFrame(animate);
+
+            if (playing && samples.length) {
+              if (now - lastTick >= SAMPLE_MS / speed) {
+                lastTick = now;
+                cursor++;
+                if (cursor >= samples.length) {
+                  cursor = samples.length - 1;
+                  playing = false;
+                  playBtn.innerHTML = '&#9654;';
+                }
+                showSample(cursor);
+              }
+              // Spin the rotors only while playing, so a paused frame is
+              // obviously paused.
+              for (var r = 0; r < rotors.length; r++) rotors[r].rotation.y += 0.55;
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+          }
+
+          showSample(0);
+          requestAnimationFrame(animate);
+
+          window.addEventListener('resize', function () {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
           });
 
-          function animate() {
-            requestAnimationFrame(animate);
-            controls.update();
-            renderer.render(scene, camera);
-          }
-          animate();
+          // --- live mode ------------------------------------------------------
+          //
+          // Same scene, fed a point at a time. Each arrival becomes a sample and
+          // the view jumps to it, so live is simply playback pinned to the end.
+          window.pushLivePoint = function (pt) {
+            var p3d = new THREE.Vector3(pt.x, pt.z, -pt.y);
+            addSample(p3d, pt.yaw, pt.sensors, samples.length);
+
+            if (pathPoints.length > 1) {
+              if (pathLine) scene.remove(pathLine);
+              pathLine = new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints(pathPoints),
+                new THREE.LineBasicMaterial({ color: 0xE8EDF2 }));
+              scene.add(pathLine);
+            }
+
+            var el = document.getElementById('empty');
+            if (el) el.remove();
+
+            scrub.max = Math.max(0, samples.length - 1);
+            cursor = samples.length - 1;
+            showSample(cursor);
+            controls.target.copy(p3d);
+          };
 
         } catch (err) {
-          console.error(err);
+          document.body.innerHTML =
+            '<div style="padding:16px;color:#e5484d;font-family:monospace;font-size:12px">' +
+            '3D view failed to start<br/>' + String(err) + '</div>';
         }
       </script>
     </body>
     </html>
   `;
 
-  // A reusable WebView component to keep the markup clean
-  const WebViewComponent = ({ webRef, onLoadEnd }: { webRef: React.RefObject<WebView>, onLoadEnd?: () => void }) => (
+  const WebViewComponent = ({ webRef, onLoadEnd }: { webRef: React.RefObject<WebView | null>, onLoadEnd?: () => void }) => (
     <WebView
       ref={webRef}
       originWhitelist={['*']}
@@ -390,7 +525,7 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
       javaScriptEnabled={true}
       domStorageEnabled={true}
       mixedContentMode="always"
-      nestedScrollEnabled={true} 
+      nestedScrollEnabled={true}
       onLoadEnd={onLoadEnd}
     />
   );
@@ -400,7 +535,7 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
       <View style={styles.inlineContainer}>
         <WebViewComponent webRef={webviewRef} />
         <TouchableOpacity style={styles.expandButton} onPress={() => {
-          setIsModalLoading(true); // Reset loading state when opening
+          setIsModalLoading(true);
           setIsFullscreen(true);
         }}>
           <Text style={styles.buttonText}>⛶ FULLSCREEN</Text>
@@ -408,7 +543,10 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
       </View>
 
       <Modal visible={isFullscreen} animationType="slide" onRequestClose={() => setIsFullscreen(false)}>
-        <SafeAreaView style={styles.modalContainer}>
+        {/* edges: the close button used to sit at a fixed top:20 and Android
+            drew it under the status bar, clipped. Letting the safe area own the
+            top inset puts it below the clock on every device. */}
+        <SafeAreaView style={styles.modalContainer} edges={['top', 'bottom']}>
           {isModalLoading && (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="large" color="#3A8FCC" />
@@ -426,9 +564,9 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
 }
 
 const styles = StyleSheet.create({
-  inlineContainer: { 
-    flex: 1, 
-    width: '100%', 
+  inlineContainer: {
+    flex: 1,
+    width: '100%',
     height: '100%',
     position: 'relative'
   },
@@ -437,9 +575,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#0B0E11',
     position: 'relative'
   },
-  webview: { 
-    flex: 1, 
-    backgroundColor: '#0B0E11' 
+  webview: {
+    flex: 1,
+    backgroundColor: '#0B0E11'
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -456,7 +594,7 @@ const styles = StyleSheet.create({
   },
   expandButton: {
     position: 'absolute',
-    bottom: 10,
+    top: 10,
     right: 10,
     backgroundColor: 'rgba(26, 34, 42, 0.85)',
     paddingVertical: 8,
@@ -467,9 +605,9 @@ const styles = StyleSheet.create({
   },
   closeButton: {
     position: 'absolute',
-    top: 20,
-    right: 20,
-    backgroundColor: 'rgba(229, 72, 77, 0.85)',
+    top: 8,
+    right: 12,
+    backgroundColor: 'rgba(229, 72, 77, 0.92)',
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 4,

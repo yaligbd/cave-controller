@@ -4,7 +4,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useDialog } from '@/contexts/DialogContext';
 import { useDroneConnection } from '@/contexts/DroneConnectionContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import React, { useMemo, useState } from 'react';
+import { clearLog } from '@/services/ErrorLog';
+import { deleteAllFlights } from '@/services/FlightStore';
+import { Prefs, setPref, subscribeToPrefs } from '@/services/Prefs';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -28,6 +31,9 @@ export default function SettingsScreen() {
   const { styles, palette, mode, toggleMode } = useTheme();
   const { isConnected, params, setParam } = useDroneConnection();
   const dialog = useDialog();
+
+  const [prefs, setPrefs] = useState<Prefs>({ keepFlights: true, keepErrors: true });
+  useEffect(() => subscribeToPrefs(setPrefs), []);
   const { account, signOut } = useAuth();
 
   const [tuningValues, setTuningValues] = useState<Record<string, number>>(() =>
@@ -43,22 +49,34 @@ export default function SettingsScreen() {
     });
   };
 
-  const handleDeleteAllData = async () => {
+  const handleDeleteFlights = async () => {
     const yes = await dialog.confirm(
-      'Delete all data?',
-      'Every saved flight on this phone would be removed permanently. Flights already ' +
-        'downloaded from the drone cannot be recovered afterwards.',
-      { destructive: true, confirmLabel: 'Delete everything' }
+      'Delete every saved flight?',
+      'All flights stored on this phone are removed permanently. A flight that has ' +
+        'already been downloaded cannot be fetched from the drone again -- the drone ' +
+        'keeps only its most recent one.',
+      { destructive: true, confirmLabel: 'Delete flights' }
     );
     if (!yes) return;
-    // Not wired up yet, and saying so is better than a button that silently
-    // does nothing. Deleting flights one at a time works from the Simulator
-    // screen today.
+    const ok = await deleteAllFlights();
     await dialog.notify(
-      'Not available yet',
-      'Bulk delete is not implemented. Delete individual flights from the Simulator screen instead.',
-      { variant: 'warn' }
+      ok ? 'Flights deleted' : 'Could not delete',
+      ok
+        ? 'Every saved flight has been removed from this phone.'
+        : 'Something went wrong removing the saved flights. They may still be there.',
+      { variant: ok ? 'info' : 'warn' }
     );
+  };
+
+  const handleDeleteLog = async () => {
+    const yes = await dialog.confirm(
+      'Clear the fault log?',
+      'Every recorded fault is removed, on screen and in storage.',
+      { destructive: true, confirmLabel: 'Clear log' }
+    );
+    if (!yes) return;
+    clearLog();
+    await dialog.notify('Fault log cleared', 'The log is empty.');
   };
 
   const handleSignOut = async () => {
@@ -192,10 +210,50 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {/* ---------- e) DATA ---------- */}
+        {/* ---------- e) DATA ----------
+            Switching a toggle OFF stops new records being written. It does NOT
+            delete what is already stored -- that is the button below it, and
+            keeping the two apart is deliberate: losing a morning's flights to a
+            mis-tapped switch would be unforgivable. */}
         <Text style={localStyles.sectionTitle}>Data</Text>
-        <TouchableOpacity style={localStyles.deleteButton} onPress={handleDeleteAllData}>
-          <Text style={localStyles.deleteButtonText}>Delete All Data</Text>
+
+        <View style={[localStyles.card, localStyles.toggleRow]}>
+          <View style={{ flex: 1, marginRight: spacing.md }}>
+            <Text style={[localStyles.bodyText, { marginBottom: 2 }]}>Keep flights</Text>
+            <Text style={localStyles.captionText}>
+              Store downloaded flights on this phone. Off: a flight is still drawn after
+              it is downloaded, but is gone when you leave the screen.
+            </Text>
+          </View>
+          <Switch
+            value={prefs.keepFlights}
+            onValueChange={(v) => setPref('keepFlights', v)}
+            trackColor={{ false: palette.borderStrong, true: palette.accent }}
+            thumbColor={prefs.keepFlights ? palette.accent : palette.textMuted}
+          />
+        </View>
+
+        <View style={[localStyles.card, localStyles.toggleRow]}>
+          <View style={{ flex: 1, marginRight: spacing.md }}>
+            <Text style={[localStyles.bodyText, { marginBottom: 2 }]}>Keep fault log</Text>
+            <Text style={localStyles.captionText}>
+              Keep recorded faults, with their times, between sessions. Off: the log is
+              cleared every time the app restarts.
+            </Text>
+          </View>
+          <Switch
+            value={prefs.keepErrors}
+            onValueChange={(v) => setPref('keepErrors', v)}
+            trackColor={{ false: palette.borderStrong, true: palette.accent }}
+            thumbColor={prefs.keepErrors ? palette.accent : palette.textMuted}
+          />
+        </View>
+
+        <TouchableOpacity style={localStyles.deleteButton} onPress={handleDeleteFlights}>
+          <Text style={localStyles.deleteButtonText}>Delete all flights</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={localStyles.deleteButton} onPress={handleDeleteLog}>
+          <Text style={localStyles.deleteButtonText}>Clear fault log</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaProvider>

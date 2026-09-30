@@ -44,6 +44,7 @@
 
 import * as FileSystem from 'expo-file-system/legacy';
 import type { Flight, FlightData } from '@/types/flightT';
+import { getPrefs } from './Prefs';
 
 const dir = () => `${FileSystem.documentDirectory}flights/`;
 const fileFor = (id: string) => `${dir()}${id}.json`;
@@ -199,6 +200,13 @@ export async function listFlights(): Promise<StoredFlight[]> {
 }
 
 export async function saveFlight(f: StoredFlight): Promise<boolean> {
+  // The operator can turn keeping flights off. Downloading still works and the
+  // flight is still drawn -- it just is not written to the phone. Reported as
+  // success, because nothing failed: the app did what it was told.
+  if (!getPrefs().keepFlights) {
+    console.log(`[flights] not saving "${f.name}": keeping flights is switched off`);
+    return true;
+  }
   try {
     await ensureDir();
     await FileSystem.writeAsStringAsync(fileFor(String(f.id)), JSON.stringify(f));
@@ -219,6 +227,23 @@ export async function renameFlight(id: number, name: string): Promise<boolean> {
     return true;
   } catch (e) {
     console.warn('[flights] rename failed:', e);
+    return false;
+  }
+}
+
+/**
+ * Removes every stored flight.
+ *
+ * Deletes the whole directory rather than walking it: a half-deleted set after
+ * a failure partway through would be worse than either outcome, and ensureDir()
+ * recreates it on the next save.
+ */
+export async function deleteAllFlights(): Promise<boolean> {
+  try {
+    await FileSystem.deleteAsync(dir(), { idempotent: true });
+    return true;
+  } catch (e) {
+    console.warn('[flights] delete all failed:', e);
     return false;
   }
 }

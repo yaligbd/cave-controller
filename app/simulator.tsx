@@ -174,7 +174,10 @@ export default function SimulatorScreen() {
         {/* 2. Dashboard explicitly right under the hologram */}
         <View style={localStyles.detailCard}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <Text style={localStyles.detailTitle}>
+            {/* flex:1 and one line, or a long flight name pushes the button
+                off the row. Android does not hit-test a view drawn outside its
+                parent, so the button was both half off-screen AND dead. */}
+            <Text style={[localStyles.detailTitle, { flex: 1, marginRight: 8 }]} numberOfLines={1}>
               {isLiveMode ? 'Live Flight Mode' : (selectedFlight?.name ?? 'No flight selected')}
             </Text>
             <TouchableOpacity 
