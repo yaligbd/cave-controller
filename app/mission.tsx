@@ -68,7 +68,11 @@ import { useDroneConnection } from '@/contexts/DroneConnectionContext';
 import { useTheme } from '@/contexts/ThemeContext';
 
 const TIMER_MIN = 1;
-const TIMER_MAX = 45;
+// 120s, up from 45. The recording is the real ceiling: the drone keeps
+// MAX_SAMPLES = 180 samples at one a second, and the firmware's own hard
+// limit lands it at the timer plus 30s -- so 150 seconds of flight against
+// 180 of room. Anything past that would record a flight with its end missing.
+const TIMER_MAX = 120;
 const HEIGHT_MIN = 200;
 const HEIGHT_MAX = 1500;
 const SAMPLEDIST_MIN = 5;
