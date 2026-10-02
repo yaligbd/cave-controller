@@ -118,7 +118,14 @@ export default function FlightDataModal({ flight, onClose }: Props) {
             <ScrollView horizontal showsHorizontalScrollIndicator>
               <View>
                 <View style={[s.row, s.headRow]}>
+                  {/* STEP and TILT come FIRST, beside the time.
+                      They were added at the far right, which on a phone means
+                      eight columns of horizontal scrolling to reach the two
+                      that explain a crash. Order by what gets read. */}
                   <Text style={[s.cell, s.headCell, s.tCol]}>t</Text>
+                  <Text style={[s.cell, s.headCell, s.wideCol]}>STEP</Text>
+                  <Text style={[s.cell, s.headCell]}>TILT</Text>
+                  <Text style={[s.cell, s.headCell]}>YAW</Text>
                   <Text style={[s.cell, s.headCell]}>X</Text>
                   <Text style={[s.cell, s.headCell]}>Y</Text>
                   <Text style={[s.cell, s.headCell]}>Z</Text>
@@ -128,19 +135,17 @@ export default function FlightDataModal({ flight, onClose }: Props) {
                   <Text style={[s.cell, s.headCell]}>RIGHT</Text>
                   <Text style={[s.cell, s.headCell]}>UP</Text>
                   <Text style={[s.cell, s.headCell]}>DOWN</Text>
-                  {/* The three that explain a crash. Positions say where it
-                      was; these say which way it pointed, what it was doing,
-                      and whether it was falling over -- the difference between
-                      a software fault and hitting something. */}
-                  <Text style={[s.cell, s.headCell]}>YAW</Text>
-                  <Text style={[s.cell, s.headCell]}>TILT</Text>
-                  <Text style={[s.cell, s.headCell, s.wideCol]}>STEP</Text>
                 </View>
 
                 <ScrollView style={s.body} nestedScrollEnabled>
                   {samples.map((p, i) => (
                     <View key={i} style={[s.row, i % 2 === 1 && s.rowAlt]}>
                       <Text style={[s.cell, s.tCol, s.tText]}>{i}s</Text>
+                      <Text style={[s.cell, s.wideCol]}>{STEP_NAMES[p.wfState ?? 0] ?? '·'}</Text>
+                      <Text style={[s.cell, (p.tiltDeg ?? 0) >= 30 ? s.alarm : null]}>
+                        {p.tiltDeg === undefined ? '·' : Math.round(p.tiltDeg) + '°'}
+                      </Text>
+                      <Text style={s.cell}>{p.yaw === undefined ? '·' : Math.round(p.yaw) + '°'}</Text>
                       <Text style={s.cell}>{m(p.x)}</Text>
                       <Text style={s.cell}>{m(p.y)}</Text>
                       <Text style={s.cell}>{m(p.z)}</Text>
@@ -150,11 +155,6 @@ export default function FlightDataModal({ flight, onClose }: Props) {
                       <Text style={s.cell}>{range(p.right)}</Text>
                       <Text style={s.cell}>{p.up === undefined ? '·' : range(p.up)}</Text>
                       <Text style={s.cell}>{p.down === undefined ? '·' : range(p.down)}</Text>
-                      <Text style={s.cell}>{p.yaw === undefined ? '·' : Math.round(p.yaw) + '°'}</Text>
-                      <Text style={[s.cell, (p.tiltDeg ?? 0) >= 30 ? s.alarm : null]}>
-                        {p.tiltDeg === undefined ? '·' : Math.round(p.tiltDeg) + '°'}
-                      </Text>
-                      <Text style={[s.cell, s.wideCol]}>{STEP_NAMES[p.wfState ?? 0] ?? '·'}</Text>
                     </View>
                   ))}
                 </ScrollView>
