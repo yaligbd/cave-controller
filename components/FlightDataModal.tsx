@@ -49,8 +49,27 @@ interface Props {
   onClose: () => void;
 }
 
+// The follower's steps, as the firmware numbers them in
+// wallfollowing_corners.h. 0 means the follower never ran -- a hover, or the
+// sample before takeoff.
+const STEP_NAMES: Record<number, string> = {
+  0: '·',
+  1: 'follow',
+  2: 'stop',
+  3: 'turn',
+  4: 'verify',
+  5: 'past-cnr',
+  6: 'reacq',
+  7: 'GAVE-UP',
+  8: 'back-off',
+};
+
 /**
  * Every recorded measurement of a flight, first to last, as a table.
+ *
+ * The STEP column names what the wall follower was doing, from the drone's own
+ * recording. The numbers are the firmware's, in wallfollowing_corners.h -- keep
+ * the two in step, or a crash log reads as the wrong thing entirely.
  *
  * The point is to be able to work on the 3D view from data that already exists
  * instead of flying repeatedly to get something to look at. So this shows the
@@ -109,6 +128,13 @@ export default function FlightDataModal({ flight, onClose }: Props) {
                   <Text style={[s.cell, s.headCell]}>RIGHT</Text>
                   <Text style={[s.cell, s.headCell]}>UP</Text>
                   <Text style={[s.cell, s.headCell]}>DOWN</Text>
+                  {/* The three that explain a crash. Positions say where it
+                      was; these say which way it pointed, what it was doing,
+                      and whether it was falling over -- the difference between
+                      a software fault and hitting something. */}
+                  <Text style={[s.cell, s.headCell]}>YAW</Text>
+                  <Text style={[s.cell, s.headCell]}>TILT</Text>
+                  <Text style={[s.cell, s.headCell, s.wideCol]}>STEP</Text>
                 </View>
 
                 <ScrollView style={s.body} nestedScrollEnabled>
@@ -124,6 +150,11 @@ export default function FlightDataModal({ flight, onClose }: Props) {
                       <Text style={s.cell}>{range(p.right)}</Text>
                       <Text style={s.cell}>{p.up === undefined ? '·' : range(p.up)}</Text>
                       <Text style={s.cell}>{p.down === undefined ? '·' : range(p.down)}</Text>
+                      <Text style={s.cell}>{p.yaw === undefined ? '·' : Math.round(p.yaw) + '°'}</Text>
+                      <Text style={[s.cell, (p.tiltDeg ?? 0) >= 30 ? s.alarm : null]}>
+                        {p.tiltDeg === undefined ? '·' : Math.round(p.tiltDeg) + '°'}
+                      </Text>
+                      <Text style={[s.cell, s.wideCol]}>{STEP_NAMES[p.wfState ?? 0] ?? '·'}</Text>
                     </View>
                   ))}
                 </ScrollView>
@@ -218,6 +249,15 @@ function createStyles(palette: Palette) {
       fontWeight: 'bold',
       fontSize: type.micro,
       letterSpacing: 1,
+    },
+    wideCol: {
+      width: 74,
+    },
+    // Past thirty degrees the aircraft is not flying any more, so it is worth
+    // finding without reading every row.
+    alarm: {
+      color: '#e5484d',
+      fontWeight: 'bold',
     },
     tCol: {
       width: 48,

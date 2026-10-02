@@ -30,4 +30,8 @@ export interface FlightData{
     posX?: number[];
     posY?: number[];
     posZ?: number[];
+
+    // Worst tilt per sample, in degrees. Optional for the same reason the
+    // positions are: flights recorded before it existed do not have it.
+    tilt?: number[];
 } 

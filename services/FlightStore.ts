@@ -75,6 +75,17 @@ export interface RawSample {
    * drone could turn, where it was always zero anyway.
    */
   yaw?: number;
+  /**
+   * The WORST tilt in the second before this sample, in degrees.
+   *
+   * The single most useful number on a crashed flight, and it was being thrown
+   * away one step from the screen -- the drone records it and the parser reads
+   * it, but it stopped here. Tilt climbing across several samples means the
+   * controller is fighting an estimate it cannot trust, which is software.
+   * Tilt near zero and then suddenly enormous means it hit something, which is
+   * not. Those are different problems with different fixes.
+   */
+  tiltDeg?: number;
 }
 
 /** A stored flight. Extends the existing Flight shape the 3D view already reads. */
@@ -127,6 +138,9 @@ export function buildFlight(
     yaw: samples.map((s) => s.yaw ?? 0),
     pitch: samples.map(() => 0),
     roll: samples.map(() => 0),
+    // Worst tilt per sample, so the 3D view can tell where a flight stopped
+    // being a flight rather than inferring it from impossible movement.
+    tilt: samples.map((s) => s.tiltDeg ?? 0),
     time: samples.map((_, i) => i),
 
     // The drone's real position. Without these the 3D view falls back to

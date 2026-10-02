@@ -1223,7 +1223,7 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
         x: s.x, y: s.y, z: s.z,
         front: s.front, back: s.back, left: s.left, right: s.right,
         up: s.up, down: s.down, yaw: s.yaw,
-        wfState: s.wfState, wfMode: s.wfMode,
+        wfState: s.wfState, wfMode: s.wfMode, tiltDeg: s.tiltDeg,
       })),
       name
     );
