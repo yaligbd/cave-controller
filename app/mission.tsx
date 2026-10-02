@@ -222,7 +222,21 @@ export default function MissionScreen() {
       // whereas stopping early would cut the landing off the flight path.
       const totalMs = (timer + 10) * 1000;
       setTimeout(async () => {
-        const name = `Flight ${new Date().toLocaleString()}`;
+        // "Live (phone)", never just "Flight".
+        //
+        // TWO recordings exist for every mission and they are not the same
+        // thing. This one is telemetry the phone heard over BLE while the
+        // aircraft flew away from it: gappy, stale where the link faltered, and
+        // carrying no heading, step or tilt. The drone's own recording,
+        // downloaded afterwards and named "Drone flight ...", is complete.
+        //
+        // They sat side by side called "Flight" and "Drone flight", which is
+        // far too subtle -- the live one got opened, drew nonsense, and looked
+        // like the 3D view was broken.
+        //
+        // It is still worth keeping. When a crash resets the drone its RAM goes
+        // with it, and then this is the only record that the flight happened.
+        const name = `Live (phone) ${new Date().toLocaleString()}`;
         const n = await stopFlightRecording(name);
         setFlying(false);
         if (n > 0) {
@@ -253,7 +267,7 @@ export default function MissionScreen() {
       await setParam('mission.state', 2);
       // Keep whatever was captured up to the abort -- a cut-short flight is
       // still real data, and often the more interesting kind.
-      const n = await stopFlightRecording(`Aborted ${new Date().toLocaleString()}`);
+      const n = await stopFlightRecording(`Live (phone, aborted) ${new Date().toLocaleString()}`);
       if (n > 0) {
         await dialog.notify('Partial flight saved', `${n} samples kept from the aborted flight.`, {
           variant: 'success',

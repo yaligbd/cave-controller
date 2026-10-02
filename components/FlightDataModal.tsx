@@ -163,6 +163,13 @@ export default function FlightDataModal({ flight, onClose }: Props) {
           )}
 
           <Text style={s.footnote}>
+            {flight.name?.startsWith('Live (phone)') ? (
+              <Text style={{ color: '#e5484d' }}>
+                Recorded by the PHONE over Bluetooth while the drone flew away from it:
+                gappy, and with no heading, step or tilt. The matching &quot;Drone flight&quot;
+                is the complete one.{' '}
+              </Text>
+            ) : null}
             All values in metres. X/Y/Z are the drone&apos;s estimated position;
             FRONT/BACK/LEFT/RIGHT/UP/DOWN are wall distances; — means nothing was
             in range, and · means the flight predates that sensor being
