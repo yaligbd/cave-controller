@@ -274,7 +274,40 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
             var wallPts = [];
             var wallCols = [];
 
-            for (var i = 0; i < n; i++) {
+            // WHERE THE FLIGHT STOPPED BEING A FLIGHT.
+            //
+            // When the aircraft goes over, its position estimate goes with it:
+            // the Flow deck loses the floor and the numbers run away to things
+            // like -3904, 8596, 14137 mm, metres outside any room it was ever
+            // in. Drawing those is what turns a crash into an unreadable
+            // scribble -- and worse, the camera frames the whole lot, so the
+            // part anyone wants to look at ends up a dot in the corner.
+            //
+            // Two things give it away, and either is enough. Tilt past 60
+            // degrees is not flight, it is tumbling. And a step of more than a
+            // metre between two samples a second apart is not possible at a
+            // cruise of 200mm/s, so the estimate has diverged whatever the
+            // attitude says.
+            //
+            // Everything from that point on is dropped: no path, no walls, no
+            // camera framing. The flight is drawn up to the moment it ended and
+            // the spot is marked, which is the thing actually worth seeing.
+            var CRASH_TILT_DEG = 60;
+            var CRASH_JUMP_M = 1.0;
+            var crashAt = -1;
+            var prev = null;
+            for (var ci = 0; ci < n; ci++) {
+              var tdeg = flightData.tilt ? flightData.tilt[ci] : 0;
+              var cp = hasPos
+                ? new THREE.Vector3(flightData.posX[ci], flightData.posZ[ci], -flightData.posY[ci])
+                : null;
+              var jumped = prev && cp && cp.distanceTo(prev) > CRASH_JUMP_M;
+              if ((tdeg && tdeg >= CRASH_TILT_DEG) || jumped) { crashAt = ci; break; }
+              prev = cp;
+            }
+            var lastGood = crashAt < 0 ? n : crashAt;
+
+            for (var i = 0; i < lastGood; i++) {
               var yawDeg = flightData.yaw && flightData.yaw[i] ? flightData.yaw[i] : 0;
               var p3d;
               if (hasPos) {
@@ -309,6 +342,30 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
                   wallCols.push(c.r, c.g, c.b);
                 }
               });
+            }
+
+            // A marker where it ended, so a crash is a place rather than an
+            // absence. Red is the BACK sensor's colour elsewhere, which is why
+            // this is drawn as a ring rather than a dot -- it is not a reading.
+            if (crashAt > 0 && pathPoints.length) {
+              var where = pathPoints[pathPoints.length - 1];
+              var ring = new THREE.Mesh(
+                new THREE.TorusGeometry(0.16, 0.022, 8, 24),
+                new THREE.MeshBasicMaterial({ color: 0xe5484d }));
+              ring.position.copy(where);
+              ring.rotation.x = Math.PI / 2;
+              scene.add(ring);
+
+              var note = document.getElementById('scale');
+              if (note) {
+                note.innerHTML = 'grid square = 1 m<br/>' +
+                  '<span style="color:#e5484d">lost control at ' +
+                  (flightData.time && flightData.time[crashAt] != null
+                    ? Number(flightData.time[crashAt]).toFixed(0) + 's'
+                    : 'sample ' + crashAt) +
+                  '</span><br/><span style="color:#7D8C9A">' +
+                  (n - crashAt) + ' later samples not drawn</span>';
+              }
             }
 
             if (wallPts.length) {
