@@ -25,7 +25,7 @@ const NAV_ITEM_WIDTH_ESTIMATE = 100;
 
 export default function Header() {
   // Extract the variables we need
-  const { isConnected, scanForDrone, disconnectFromDrone } = useDroneConnection();
+  const { isConnected, bleOn, enableBle, disconnectFromDrone } = useDroneConnection();
   const { palette } = useTheme();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
@@ -39,12 +39,21 @@ export default function Header() {
     navScrollRef.current?.scrollTo({ x: offset, animated: true });
   }, [activeIndex]);
 
-  // Create a handler function for the Bluetooth button
+  // THIS BUTTON IS BLUETOOTH, NOT THE DRONE.
+  //
+  // It used to start a scan, which made one icon mean two unrelated things:
+  // whether the radio was on, and whether a drone was found. Tapping it when
+  // Bluetooth was off did nothing visible and looked broken.
+  //
+  // Now it answers for the radio alone -- green when the adapter is on, tap to
+  // switch it on. Finding a drone is the Scan button's job, on the screen where
+  // that is what you came to do. Disconnecting stays here because it is the
+  // only control always on screen while something is connected.
   const handleBluetoothPress = () => {
     if (isConnected) {
       disconnectFromDrone();
-    } else {
-      scanForDrone();
+    } else if (!bleOn) {
+      void enableBle();
     }
   };
 
@@ -158,9 +167,9 @@ export default function Header() {
         <View style={localStyles.iconButtons}>
           <TouchableOpacity style={localStyles.roundButton} onPress={handleBluetoothPress}>
             <Ionicons
-              name="bluetooth"
+              name={bleOn ? 'bluetooth' : 'bluetooth-outline'}
               size={16}
-              color={isConnected ? palette.ready : palette.textMuted}
+              color={bleOn ? palette.ready : palette.textMuted}
             />
           </TouchableOpacity>
         </View>

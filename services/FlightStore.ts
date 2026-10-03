@@ -180,6 +180,46 @@ export function buildFlight(
 }
 
 /** Newest first. Returns [] on any problem rather than throwing. */
+/** What kind of record a flight is, which decides how it should be trusted. */
+export type FlightKind = 'drone' | 'phone' | 'crashed';
+
+/**
+ * Did this flight end on its back?
+ *
+ * Two giveaways, either enough. Tilt past 60 degrees is not flight. And a step
+ * of more than a metre between samples a second apart cannot happen at a cruise
+ * of 200mm/s, so the position estimate has diverged whatever the attitude says
+ * -- which is what happens the moment the Flow deck loses the floor.
+ *
+ * THE SAME RULE LIVES IN SimulatorWebView, inside the page it builds, where it
+ * decides how much of the flight to draw. It cannot be imported across that
+ * boundary. If one changes, change both, or a flight will be drawn as healthy
+ * and listed as crashed.
+ */
+function didCrash(samples?: RawSample[]): boolean {
+  if (!samples || samples.length < 2) return false;
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    if ((s.tiltDeg ?? 0) >= 60) return true;
+    if (i > 0) {
+      const p = samples[i - 1];
+      const dx = (s.x - p.x) / 1000, dy = (s.y - p.y) / 1000, dz = (s.z - p.z) / 1000;
+      if (Math.sqrt(dx * dx + dy * dy + dz * dz) > 1.0) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Crashed beats everything, because that is what decides whether the numbers
+ * mean anything. After that it is simply who did the recording.
+ */
+export function flightKind(f: { name?: string; samples?: RawSample[] }): FlightKind {
+  if (didCrash(f.samples)) return 'crashed';
+  if (f.name?.startsWith('Live (phone)')) return 'phone';
+  return 'drone';
+}
+
 export async function listFlights(): Promise<StoredFlight[]> {
   try {
     await ensureDir();

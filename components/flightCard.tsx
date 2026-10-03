@@ -33,12 +33,13 @@
 
 import { Palette, radius, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
+import { flightKind, type FlightKind } from '@/services/FlightStore';
 import { Flight } from '@/types/flightT';
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 interface FlightCardProps {
-  flight: Flight;
+  flight: Flight & { samples?: any[] };
   onPress?: () => void;
   /** Draw as selected. The list highlights whichever flight the 3D view shows. */
   selected?: boolean;
@@ -63,14 +64,32 @@ export default function FlightCard({ flight, onPress, selected }: FlightCardProp
   // per flight.
   const samples = flight.flightPath?.time?.length ?? 0;
 
+  // WHO RECORDED THIS, AND DID IT END BADLY.
+  //
+  // Three kinds of card, three backgrounds, because the three mean very
+  // different things and they used to look identical. A phone recording is
+  // gappy telemetry heard over BLE while the aircraft flew away; a drone
+  // recording is complete; and a crashed flight's numbers stop meaning anything
+  // from the moment it went over. Opening the wrong one and seeing nonsense
+  // reads as the app being broken.
+  const kind: FlightKind = flightKind(flight);
+  const tone = KIND_TONE[kind];
+
   return (
     <TouchableOpacity
-      style={[s.card, selected && { borderColor: palette.accent, borderWidth: 2 }]}
+      style={[
+        s.card,
+        { backgroundColor: tone.bg(palette), borderColor: tone.line(palette) },
+        selected && { borderColor: palette.accent, borderWidth: 2 },
+      ]}
       onPress={onPress}
       activeOpacity={0.7}
     >
       <View style={s.header}>
         <Text style={s.title} numberOfLines={1}>{flight.name}</Text>
+        <View style={[s.badge, { borderColor: tone.line(palette) }]}>
+          <Text style={[s.badgeText, { color: tone.line(palette) }]}>{tone.label}</Text>
+        </View>
         {selected && <Text style={s.selectedTag}>SHOWING</Text>}
       </View>
 
@@ -86,6 +105,16 @@ export default function FlightCard({ flight, onPress, selected }: FlightCardProp
   );
 }
 
+const KIND_TONE: Record<FlightKind, {
+  label: string;
+  bg: (p: Palette) => string;
+  line: (p: Palette) => string;
+}> = {
+  drone:   { label: 'DRONE',   bg: (p) => p.surface,  line: (p) => p.border },
+  phone:   { label: 'PHONE',   bg: (p) => p.warnBg,   line: (p) => p.warn },
+  crashed: { label: 'CRASHED', bg: (p) => p.faultBg,  line: (p) => p.fault },
+};
+
 function Stat({ palette, label, value }: { palette: Palette; label: string; value: string }) {
   const s = useMemo(() => createStyles(palette), [palette]);
   return (
@@ -98,6 +127,19 @@ function Stat({ palette, label, value }: { palette: Palette; label: string; valu
 
 function createStyles(palette: Palette) {
   return StyleSheet.create({
+    badge: {
+      borderWidth: 1,
+      borderRadius: radius.sm,
+      paddingHorizontal: 6,
+      paddingVertical: 1,
+      marginLeft: spacing.sm,
+    },
+    badgeText: {
+      fontFamily: type.fontFamily,
+      fontSize: 9,
+      fontWeight: 'bold',
+      letterSpacing: 1,
+    },
     card: {
       backgroundColor: palette.surface,
       borderRadius: radius.sm,

@@ -9,7 +9,7 @@ import Header from '@/components/Header';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { useDialog } from '@/contexts/DialogContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import { clearLog, LogEntry, subscribeToLog } from '@/services/ErrorLog';
+import { LogEntry, clearLog, removeLogEntry, subscribeToLog } from '@/services/ErrorLog';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -109,6 +109,15 @@ export default function LogsScreen() {
                   <Ionicons name={LEVEL_ICON[entry.level]} size={16} color={colour} />
                   <Text style={[local.cardTitle, { color: palette.textPrimary }]}>{entry.title}</Text>
                   <Text style={local.time}>{timeOf(entry.at)}</Text>
+                  {/* Per-entry dismissal. Clearing the whole log to be rid of
+                      one handled fault loses the ones still worth reading. */}
+                  <Pressable
+                    onPress={() => removeLogEntry(entry.id)}
+                    hitSlop={10}
+                    accessibilityLabel="Delete this entry"
+                  >
+                    <Ionicons name="close" size={15} color={palette.textMuted} />
+                  </Pressable>
                 </View>
 
                 <Text style={local.source}>{entry.source.toUpperCase()}</Text>

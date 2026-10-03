@@ -133,6 +133,18 @@ export function clearLog(): void {
   void forgetStoredLog();
 }
 
+/**
+ * Removes one entry.
+ *
+ * Clearing the whole log to be rid of a single known-and-handled fault means
+ * losing the ones still worth reading, so each gets its own dismissal.
+ */
+export function removeLogEntry(id: number): void {
+  entries = entries.filter((e) => e.id !== id);
+  emit();
+  scheduleSave();
+}
+
 export function recordLog(entry: Omit<LogEntry, 'id' | 'at'>): void {
   // Newest first, because that is the one being read.
   entries = [{ ...entry, id: nextId++, at: Date.now() }, ...entries].slice(0, MAX_ENTRIES);

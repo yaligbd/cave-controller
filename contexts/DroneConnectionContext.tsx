@@ -62,7 +62,7 @@
 // ===========================================================================
 
 import { recordDroneError, recordLog } from '@/services/ErrorLog';
-import React, { createContext, useContext, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { loadToc, saveToc } from '@/services/TocCache';
 import {
   bulkClearPacket,
@@ -255,6 +255,16 @@ interface DroneContextType {
   params: Map<string, ParamEntry>;
   tocProgress: TocProgress;
   bleAvailable: boolean;
+  /** Is the phone's Bluetooth adapter actually powered on right now. */
+  bleOn: boolean;
+  /**
+   * Ask the phone to switch Bluetooth on.
+   *
+   * Android can do this directly. iOS cannot -- only the user can, from
+   * Settings -- so there it resolves having done nothing, and the caller should
+   * say so rather than appear broken.
+   */
+  enableBle: () => Promise<void>;
   bleStatus: BleStatus;
   bleError: string | null;
   scanForDrone: () => Promise<void>;
@@ -285,6 +295,40 @@ const DroneContext = createContext<DroneContextType | null>(null);
 
 export function DroneConnectionProvider({ children }: { children: React.ReactNode }) {
   const [isConnected, setIsConnected] = useState(false);
+
+  // WHETHER BLUETOOTH ITSELF IS ON, which is a different question from whether
+  // a drone is connected, and the header used to conflate the two.
+  //
+  // Read-only: this subscribes to the adapter and reports what it says. It
+  // touches nothing on the CRTP or flight paths.
+  const [bleOn, setBleOn] = useState(false);
+
+  useEffect(() => {
+    const manager = getBleManager();
+    if (!manager) return;
+    let alive = true;
+    // emitCurrentState: true, or the icon stays wrong until the user toggles
+    // Bluetooth, which is exactly when they are least likely to be looking.
+    const sub = manager.onStateChange((st) => {
+      if (alive) setBleOn(st === State.PoweredOn);
+    }, true);
+    return () => {
+      alive = false;
+      sub.remove();
+    };
+  }, []);
+
+  const enableBle = async () => {
+    const manager = getBleManager();
+    if (!manager) return;
+    try {
+      // Android only. On iOS this throws, and the right answer is to say so
+      // rather than to fail silently.
+      await manager.enable();
+    } catch (error) {
+      recordDroneError(error, 'bluetooth');
+    }
+  };
   const [params, setParams] = useState<Map<string, ParamEntry>>(new Map());
   const [tocProgress, setTocProgress] = useState<TocProgress>({ loaded: 0, total: 0 });
   const [bleStatus, setBleStatus] = useState<BleStatus>('idle');
@@ -1773,6 +1817,8 @@ withTocRetry(() => fetchParamToc().then(() => fetchLogToc()))
         params,
         tocProgress,
         bleAvailable: getBleManager() !== null,
+        bleOn,
+        enableBle,
         bleStatus,
         bleError,
         scanForDrone,

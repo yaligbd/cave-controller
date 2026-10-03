@@ -46,6 +46,7 @@ import {
 } from '@/services/FlightStore';
 import React, { useCallback, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Dimensions } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { useDialog } from '@/contexts/DialogContext';
@@ -180,12 +181,6 @@ export default function SimulatorScreen() {
             <Text style={[localStyles.detailTitle, { flex: 1, marginRight: 8 }]} numberOfLines={1}>
               {isLiveMode ? 'Live Flight Mode' : (selectedFlight?.name ?? 'No flight selected')}
             </Text>
-            <TouchableOpacity 
-              style={[localStyles.liveModeBtn, isLiveMode && localStyles.liveModeBtnActive]}
-              onPress={() => setIsLiveMode(!isLiveMode)}
-            >
-              <Text style={localStyles.liveModeBtnText}>{isLiveMode ? 'STOP LIVE' : 'START LIVE'}</Text>
-            </TouchableOpacity>
           </View>
           
           {!isLiveMode ? (
@@ -206,6 +201,24 @@ export default function SimulatorScreen() {
               <Text style={localStyles.detailRow}>Battery: {((logValues.get('tele.vbat') || 0) / 1000.0).toFixed(2)} V</Text>
             </>
           )}
+        </View>
+
+        {/* A chevron, because the flights below are deliberately off-screen.
+            Without it the screen looks like it ends at the card. */}
+        {!isLiveMode && flights.length > 0 && (
+          <Text style={localStyles.moreHint}>⌄  {flights.length} saved flight{flights.length === 1 ? '' : 's'} below</Text>
+        )}
+
+        {/* The two things you can ASK the drone for, together. START LIVE used
+            to sit in the middle of the flight summary, where it read as part of
+            the flight rather than as a command. */}
+        <View style={localStyles.actionRow}>
+          <TouchableOpacity
+            style={[localStyles.liveModeBtn, isLiveMode && localStyles.liveModeBtnActive]}
+            onPress={() => setIsLiveMode(!isLiveMode)}
+          >
+            <Text style={localStyles.liveModeBtnText}>{isLiveMode ? 'STOP LIVE' : 'START LIVE'}</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Pull the flight the DRONE recorded, as opposed to the copy the phone
@@ -292,7 +305,14 @@ export default function SimulatorScreen() {
 function createLocalStyles(palette: Palette) {
   return StyleSheet.create({
     simulatorContainer: {
-      height: 350,
+      // THE HOLOGRAM IS THE SCREEN.
+      //
+      // It was a fixed 350px, which on a tall phone left it sharing the view
+      // with a dashboard and a list -- the one thing anyone opens this screen
+      // to look at, given a third of it. Now it takes a little over half the
+      // window and everything else starts below the fold, where a chevron says
+      // so.
+      height: Math.round(Dimensions.get('window').height * 0.55),
       width: '100%',
       borderWidth: 1, 
       borderColor: palette.border,
@@ -300,6 +320,19 @@ function createLocalStyles(palette: Palette) {
       backgroundColor: palette.bg,
       marginBottom: spacing.md, // Pulled slightly tighter to group with the dashboard below
       overflow: 'hidden', 
+    },
+    moreHint: {
+      fontFamily: type.fontFamily,
+      color: palette.textMuted,
+      fontSize: type.xs,
+      textAlign: 'center',
+      marginBottom: spacing.sm,
+      letterSpacing: 1,
+    },
+    actionRow: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      marginBottom: spacing.md,
     },
     detailCard: {
       backgroundColor: palette.surface,
