@@ -15,7 +15,7 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
  * Place it as the first child of a view with `overflow: 'hidden'` and a
  * borderRadius; it sits behind the real children and takes their corners.
  */
-export function Gradient({
+function GradientImpl({
   colors,
   /** 'down' for a lit-from-above surface, 'diagonal' for a sheen across glass. */
   direction = 'down',
@@ -47,6 +47,15 @@ export function Gradient({
     </View>
   );
 }
+
+/**
+ * MEMOISED ON PURPOSE. The sensors screen holds seven of these and re-renders
+ * ten times a second as the ranges arrive; redrawing seven SVG documents at that
+ * rate is visible on a slower phone. The props are stable -- the colour pairs
+ * live on the palette object, so they keep the same identity between renders --
+ * so the memo actually holds and the gradient is drawn once.
+ */
+export const Gradient = React.memo(GradientImpl);
 
 /**
  * The specular sheen that makes a translucent pane read as glass rather than as
