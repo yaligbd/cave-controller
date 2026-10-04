@@ -34,7 +34,7 @@
 import { Palette, radius, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import type { StoredFlight } from '@/services/FlightStore';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Modal,
   ScrollView,
@@ -86,6 +86,18 @@ export default function FlightDataModal({ flight, onClose }: Props) {
   if (!flight) return null;
 
   const samples = flight.samples ?? [];
+
+  // TAP A ROW TO SEE EVERYTHING IN IT.
+  //
+  // Thirteen columns do not fit on a phone, so the six ranger readings -- the
+  // ones that say what the aircraft could actually SEE -- were off the right
+  // edge behind a horizontal scroll that is awkward to find and awkward to use.
+  // Twice in a row a screenshot of a crash arrived showing only the left half
+  // of the table, which is the half that cannot explain a crash.
+  //
+  // The table still scrolls for anyone who wants it. But the important numbers
+  // are now one tap away instead of one gesture nobody makes.
+  const [openRow, setOpenRow] = useState<number | null>(null);
   const m = (v: number) => (v / 1000).toFixed(2);
 
   // 0 means "nothing within range" on the multiranger, not "a wall at zero
@@ -139,7 +151,13 @@ export default function FlightDataModal({ flight, onClose }: Props) {
 
                 <ScrollView style={s.body} nestedScrollEnabled>
                   {samples.map((p, i) => (
-                    <View key={i} style={[s.row, i % 2 === 1 && s.rowAlt]}>
+                    <View key={i}>
+                    <TouchableOpacity
+                      style={[s.row, i % 2 === 1 && s.rowAlt,
+                              openRow === i && s.rowOpen]}
+                      onPress={() => setOpenRow(openRow === i ? null : i)}
+                      activeOpacity={0.6}
+                    >
                       <Text style={[s.cell, s.tCol, s.tText]}>{i}s</Text>
                       <Text style={[s.cell, s.wideCol]}>{STEP_NAMES[p.wfState ?? 0] ?? '·'}</Text>
                       <Text style={[s.cell, (p.tiltDeg ?? 0) >= 30 ? s.alarm : null]}>
@@ -155,6 +173,28 @@ export default function FlightDataModal({ flight, onClose }: Props) {
                       <Text style={s.cell}>{range(p.right)}</Text>
                       <Text style={s.cell}>{p.up === undefined ? '·' : range(p.up)}</Text>
                       <Text style={s.cell}>{p.down === undefined ? '·' : range(p.down)}</Text>
+                    </TouchableOpacity>
+
+                    {openRow === i && (
+                      <View style={s.detail}>
+                        <Text style={s.detailHead}>
+                          {i}s · {STEP_NAMES[p.wfState ?? 0] ?? '·'}
+                          {p.tiltDeg !== undefined ? ` · tilt ${Math.round(p.tiltDeg)}°` : ''}
+                          {p.yaw !== undefined ? ` · heading ${Math.round(p.yaw)}°` : ''}
+                        </Text>
+                        <View style={s.detailGrid}>
+                          <Det s={s} k="FRONT" v={range(p.front)} />
+                          <Det s={s} k="BACK"  v={range(p.back)} />
+                          <Det s={s} k="LEFT"  v={range(p.left)} />
+                          <Det s={s} k="RIGHT" v={range(p.right)} />
+                          <Det s={s} k="UP"    v={p.up === undefined ? '·' : range(p.up)} />
+                          <Det s={s} k="DOWN"  v={p.down === undefined ? '·' : range(p.down)} />
+                        </View>
+                        <Text style={s.detailPos}>
+                          position  x {m(p.x)}   y {m(p.y)}   z {m(p.z)}
+                        </Text>
+                      </View>
+                    )}
                     </View>
                   ))}
                 </ScrollView>
@@ -178,6 +218,15 @@ export default function FlightDataModal({ flight, onClose }: Props) {
         </View>
       </View>
     </Modal>
+  );
+}
+
+function Det({ s, k, v }: { s: any; k: string; v: string }) {
+  return (
+    <View style={s.detItem}>
+      <Text style={s.detKey}>{k}</Text>
+      <Text style={s.detVal}>{v}</Text>
+    </View>
   );
 }
 
@@ -256,6 +305,48 @@ function createStyles(palette: Palette) {
       fontWeight: 'bold',
       fontSize: type.micro,
       letterSpacing: 1,
+    },
+    rowOpen: {
+      backgroundColor: palette.surfaceRaised,
+    },
+    detail: {
+      backgroundColor: palette.surfaceRaised,
+      borderLeftWidth: 2,
+      borderLeftColor: palette.accent,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+      marginBottom: spacing.xs,
+    },
+    detailHead: {
+      fontFamily: type.fontFamily,
+      color: palette.textPrimary,
+      fontSize: type.xs,
+      fontWeight: 'bold',
+      marginBottom: spacing.sm,
+    },
+    detailGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+    },
+    detItem: {
+      width: '33%',
+      marginBottom: spacing.sm,
+    },
+    detKey: {
+      fontFamily: type.fontFamily,
+      color: palette.textMuted,
+      fontSize: 9,
+      letterSpacing: 1,
+    },
+    detVal: {
+      fontFamily: type.fontFamily,
+      color: palette.textPrimary,
+      fontSize: type.sm,
+    },
+    detailPos: {
+      fontFamily: type.fontFamily,
+      color: palette.textSecondary,
+      fontSize: type.xs,
     },
     wideCol: {
       width: 74,
