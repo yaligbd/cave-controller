@@ -387,6 +387,20 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
             // Frame the flight rather than a fixed distance, with a 1.5m floor
             // so a hover is not zoomed in until ordinary drift fills the screen
             // and looks like wild flying.
+            //
+            // A flight whose FIRST sample already looks like a crash leaves
+            // nothing to frame: Box3 over no points has its min at +infinity,
+            // the centre comes out NaN, and a camera at NaN renders nothing at
+            // all -- a blank screen with no clue why.
+            if (!pathPoints.length) {
+              camera.position.set(4, 4, 4);
+              controls.target.set(0, 0, 0);
+              var warn = document.getElementById('scale');
+              if (warn) {
+                warn.innerHTML = '<span style="color:#e5484d">nothing to draw<br/>' +
+                  'this flight was already out of control at its first sample</span>';
+              }
+            } else {
             var box = new THREE.Box3().setFromPoints(pathPoints);
             var centre = box.getCenter(new THREE.Vector3());
             var size = box.getSize(new THREE.Vector3());
@@ -396,6 +410,7 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
                                 centre.y + extent * 1.1 + 1.0,
                                 centre.z + extent * 1.5);
             camera.lookAt(centre);
+            }
           } else {
             camera.position.set(4, 4, 4);
             controls.target.set(0, 0, 0);
