@@ -1,4 +1,8 @@
 import Header from '@/components/Header';
+import Button from '@/components/ui/Button';
+import Reveal from '@/components/ui/Reveal';
+import Screen from '@/components/ui/Screen';
+import Surface from '@/components/ui/Surface';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { BleStatus, useDroneConnection } from '@/contexts/DroneConnectionContext';
 import { describeDroneError } from '@/services/DroneErrors';
@@ -6,8 +10,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { Href, useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // Hardware checklist rows: name shown in the UI, mapped to the TOC parameter
 // whose presence proves that piece is compiled into the connected firmware.
@@ -158,8 +161,9 @@ export default function ConnectScreen() {
     }
   };
 
-  const connectButtonColor = !bleAvailable ? palette.borderStrong : isConnected ? palette.fault : palette.accent;
-  const connectButtonTextColor = !bleAvailable ? palette.textMuted : connectButtonColor;
+  // Button handles the disabled colour itself, so this is only about intent:
+  // accent when the tap will connect, fault when it will drop the link.
+  const connectButtonColor = isConnected ? palette.fault : palette.accent;
 
   const MARK_COLOR: Record<MarkState, string> = {
     disconnected: palette.textMuted,
@@ -184,45 +188,47 @@ export default function ConnectScreen() {
   const localStyles = useMemo(() => createLocalStyles(palette), [palette]);
 
   return (
-    <SafeAreaProvider style={styles.safeArea}>
+    <Screen>
       <Header />
-      <View style={localStyles.container}>
+      <ScrollView contentContainerStyle={localStyles.container} showsVerticalScrollIndicator={false}>
         <Text style={styles.label}>Connect</Text>
 
-        <View
-          style={[
-            localStyles.statusBlock,
-            { backgroundColor: CONN_BG[connStatus.level], borderLeftColor: CONN_COLOR[connStatus.level] },
-          ]}
-        >
-          <View style={localStyles.statusWordRow}>
-            {connStatus.spinning ? (
-              <ActivityIndicator size="small" color={CONN_COLOR[connStatus.level]} style={localStyles.spinner} />
-            ) : (
-              <Text style={[localStyles.statusWord, { color: CONN_COLOR[connStatus.level] }]}>{'●'} </Text>
-            )}
-            <Text style={[localStyles.statusWord, { color: CONN_COLOR[connStatus.level] }]}>
-              {connStatus.word.toUpperCase()}
-            </Text>
-          </View>
-          <Text style={localStyles.statusDetail}>{connStatus.detail}</Text>
-          {!!connStatus.fix && <Text style={localStyles.statusFix}>{connStatus.fix}</Text>}
-        </View>
+        <Reveal index={0} style={localStyles.block}>
+          <Surface
+            tone="glass"
+            level="md"
+            style={[
+              localStyles.statusBlock,
+              { backgroundColor: CONN_BG[connStatus.level], borderLeftColor: CONN_COLOR[connStatus.level] },
+            ]}
+          >
+            <View style={localStyles.statusWordRow}>
+              {connStatus.spinning ? (
+                <ActivityIndicator size="small" color={CONN_COLOR[connStatus.level]} style={localStyles.spinner} />
+              ) : (
+                <View style={[localStyles.statusDot, { backgroundColor: CONN_COLOR[connStatus.level] }]} />
+              )}
+              <Text style={[localStyles.statusWord, { color: CONN_COLOR[connStatus.level] }]}>
+                {connStatus.word.toUpperCase()}
+              </Text>
+            </View>
+            <Text style={localStyles.statusDetail}>{connStatus.detail}</Text>
+            {!!connStatus.fix && <Text style={localStyles.statusFix}>{connStatus.fix}</Text>}
+          </Surface>
+        </Reveal>
 
-        <TouchableOpacity
-          style={[
-            localStyles.connectButton,
-            { borderColor: connectButtonColor, backgroundColor: alpha(connectButtonColor, 0.12) },
-          ]}
-          onPress={handleConnectPress}
-          disabled={!bleAvailable}
-        >
-          <Text style={[localStyles.connectButtonText, { color: connectButtonTextColor }]}>
-            {isConnected ? 'Disconnect' : 'Connect'}
-          </Text>
-        </TouchableOpacity>
+        <Reveal index={1} style={localStyles.block}>
+          <Button
+            label={isConnected ? 'Disconnect' : 'Connect'}
+            tint={connectButtonColor}
+            variant={isConnected ? 'outline' : 'solid'}
+            disabled={!bleAvailable}
+            onPress={handleConnectPress}
+          />
+        </Reveal>
 
-        <View style={localStyles.panel}>
+        <Reveal index={2} style={localStyles.block}>
+        <Surface level="md">
           <Text style={localStyles.microLabel}>Hardware Checklist</Text>
           {CHECKLIST_ITEMS.map((item) => {
             const state = getMarkState(isConnected, tocDone, findParam(item.paramName) !== undefined);
@@ -348,43 +354,41 @@ export default function ConnectScreen() {
               </>
             );
           })()}
-        </View>
-      </View>
-    </SafeAreaProvider>
+        </Surface>
+        </Reveal>
+      </ScrollView>
+    </Screen>
   );
 }
 
 function createLocalStyles(palette: Palette) {
   return StyleSheet.create({
-    container: { flex: 1, alignItems: 'center', padding: spacing.lg },
-    panel: {
-      width: '100%',
-      backgroundColor: palette.surface,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: radius.sm,
-      padding: spacing.lg,
-      marginTop: spacing.lg,
-    },
+    container: { alignItems: 'center', padding: spacing.lg, paddingBottom: spacing.xxl },
+    /** Vertical rhythm between panels, now that each one is its own Reveal. */
+    block: { width: '100%', marginTop: spacing.lg },
     rowLabel: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.textPrimary,
-      fontSize: type.sm,
+      fontSize: type.md,
     },
     microLabel: {
-      fontFamily: type.fontFamily,
-      fontSize: type.micro,
+      fontFamily: type.sansMedium,
+      fontSize: type.xs,
       letterSpacing: 1.5,
       textTransform: 'uppercase',
       color: palette.textMuted,
       marginBottom: spacing.md,
     },
+    // The status colour arrives as a left border and a tinted fill from the
+    // caller; Surface supplies the radius, sheen and shadow.
     statusBlock: {
-      width: '100%',
-      borderLeftWidth: 3,
-      borderRadius: radius.sm,
-      padding: spacing.lg,
-      marginTop: spacing.lg,
+      borderLeftWidth: 4,
+    },
+    statusDot: {
+      width: 10,
+      height: 10,
+      borderRadius: radius.pill,
+      marginRight: spacing.sm,
     },
     statusWordRow: {
       flexDirection: 'row',
@@ -394,46 +398,30 @@ function createLocalStyles(palette: Palette) {
       marginRight: spacing.sm,
     },
     statusWord: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       fontSize: type.md,
-      fontWeight: 'bold',
-      letterSpacing: 1,
+      fontWeight: '700',
+      letterSpacing: 1.2,
       textTransform: 'uppercase',
     },
     statusDetail: {
-      fontFamily: type.fontFamily,
-      fontSize: type.xs,
+      fontFamily: type.sans,
+      fontSize: type.sm,
       color: palette.textSecondary,
       marginTop: spacing.xs,
     },
     // What to do, set apart from what happened. Quieter and indented, so the
     // eye reads the fault first and the instruction second.
     statusFix: {
-      fontFamily: type.fontFamily,
-      fontSize: type.xs,
-      lineHeight: type.xs * 1.5,
+      fontFamily: type.sans,
+      fontSize: type.sm,
+      lineHeight: type.sm * 1.5,
       color: palette.textMuted,
       marginTop: spacing.sm,
       paddingLeft: spacing.md,
       borderLeftWidth: 1,
       borderLeftColor: palette.border,
     },
-    connectButton: {
-      width: '100%',
-      borderWidth: 1,
-      borderRadius: radius.sm,
-      paddingVertical: spacing.md,
-      alignItems: 'center',
-      marginTop: spacing.lg,
-    },
-    connectButtonText: {
-      fontFamily: type.fontFamily,
-      fontSize: type.sm,
-      fontWeight: 'bold',
-      letterSpacing: 2,
-      textTransform: 'uppercase',
-    },
-
   selftestBanner: {
     borderWidth: 1,
     borderRadius: radius.md,
@@ -442,17 +430,21 @@ function createLocalStyles(palette: Palette) {
     marginBottom: spacing.sm,
   },
   selftestTitle: {
-    fontFamily: type.fontFamily,
+    fontFamily: type.sansMedium,
     fontSize: type.md,
     fontWeight: 'bold',
     letterSpacing: 1,
     marginBottom: spacing.xs,
   },
+    // Each row gets a divider rather than bare spacing, so a long checklist
+    // reads as a list instead of floating text.
     checklistRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: spacing.sm,
+      paddingVertical: spacing.md,
+      borderBottomWidth: 1,
+      borderBottomColor: alpha(palette.border, 0.6),
     },
     markGroup: {
       flexDirection: 'row',
@@ -460,23 +452,24 @@ function createLocalStyles(palette: Palette) {
       gap: spacing.sm,
     },
     checkingLabel: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       fontSize: type.micro,
       letterSpacing: 1.5,
       textTransform: 'uppercase',
       color: palette.warn,
     },
     mark: {
-      fontFamily: type.fontFamily,
-      fontSize: type.lg,
+      fontFamily: type.mono,
+      fontSize: type.md,
       fontWeight: 'bold',
     },
     caption: {
-      fontFamily: type.fontFamily,
-      fontSize: type.micro,
+      fontFamily: type.sans,
+      fontSize: type.xs,
+      lineHeight: type.xs * 1.45,
       color: palette.textMuted,
       marginBottom: spacing.md,
-      marginTop: -spacing.xs,
+      marginTop: spacing.xs,
     },
   });
 }
