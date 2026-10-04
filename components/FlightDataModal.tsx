@@ -83,10 +83,15 @@ export default function FlightDataModal({ flight, onClose }: Props) {
   const { palette } = useTheme();
   const s = useMemo(() => createStyles(palette), [palette]);
 
-  if (!flight) return null;
-
-  const samples = flight.samples ?? [];
-
+  // EVERY HOOK ABOVE THE EARLY RETURN BELOW.
+  //
+  // This one was added underneath it, and that is what made pressing a flight
+  // throw. With no flight open the component returns at `if (!flight)` and the
+  // hook never runs; press a flight and it does, so React sees the hook count
+  // change between renders and refuses. Hooks have to run in the same order
+  // every single render, which means none of them may sit below a conditional
+  // return.
+  //
   // TAP A ROW TO SEE EVERYTHING IN IT.
   //
   // Thirteen columns do not fit on a phone, so the six ranger readings -- the
@@ -98,6 +103,10 @@ export default function FlightDataModal({ flight, onClose }: Props) {
   // The table still scrolls for anyone who wants it. But the important numbers
   // are now one tap away instead of one gesture nobody makes.
   const [openRow, setOpenRow] = useState<number | null>(null);
+
+  if (!flight) return null;
+
+  const samples = flight.samples ?? [];
   const m = (v: number) => (v / 1000).toFixed(2);
 
   // 0 means "nothing within range" on the multiranger, not "a wall at zero
