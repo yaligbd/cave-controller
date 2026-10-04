@@ -31,12 +31,14 @@
 // contexts/DroneConnectionContext.tsx and app/mission.tsx.
 // ===========================================================================
 
-import { Palette, radius, spacing, type } from '@/constants/theme';
+import { Tappable } from '@/components/ui/Button';
+import { Gradient } from '@/components/ui/Gradient';
+import { alpha, Palette, radius, shadow, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { flightKind, type FlightKind } from '@/services/FlightStore';
 import { Flight } from '@/types/flightT';
 import React, { useMemo } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 interface FlightCardProps {
   flight: Flight & { samples?: any[] };
@@ -76,18 +78,24 @@ export default function FlightCard({ flight, onPress, selected }: FlightCardProp
   const tone = KIND_TONE[kind];
 
   return (
-    <TouchableOpacity
-      style={[
-        s.card,
-        { backgroundColor: tone.bg(palette), borderColor: tone.line(palette) },
-        selected && { borderColor: palette.accent, borderWidth: 2 },
-      ]}
-      onPress={onPress}
-      activeOpacity={0.7}
-    >
+    <Tappable onPress={onPress}>
+      <View
+        style={[
+          s.card,
+          { backgroundColor: tone.bg(palette), borderColor: tone.line(palette) },
+          selected && { borderColor: palette.accent, borderWidth: 2 },
+        ]}
+      >
+        {/* The kind's own colour, bled across the top of the card. It is the
+            fastest way to tell a drone recording from a phone one in a list,
+            which matters because opening the wrong one shows nonsense. */}
+        <Gradient
+          colors={[alpha(tone.line(palette), 0.22), 'rgba(0,0,0,0)']}
+          style={{ bottom: undefined, height: 64 }}
+        />
       <View style={s.header}>
         <Text style={s.title} numberOfLines={1}>{flight.name}</Text>
-        <View style={[s.badge, { borderColor: tone.line(palette) }]}>
+        <View style={[s.badge, { backgroundColor: alpha(tone.line(palette), 0.18) }]}>
           <Text style={[s.badgeText, { color: tone.line(palette) }]}>{tone.label}</Text>
         </View>
         {selected && <Text style={s.selectedTag}>SHOWING</Text>}
@@ -101,7 +109,8 @@ export default function FlightCard({ flight, onPress, selected }: FlightCardProp
       </View>
 
       <Text style={s.hint}>Tap to view the flight data</Text>
-    </TouchableOpacity>
+      </View>
+    </Tappable>
   );
 }
 
@@ -128,16 +137,15 @@ function Stat({ palette, label, value }: { palette: Palette; label: string; valu
 function createStyles(palette: Palette) {
   return StyleSheet.create({
     badge: {
-      borderWidth: 1,
-      borderRadius: radius.sm,
-      paddingHorizontal: 6,
-      paddingVertical: 1,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 3,
       marginLeft: spacing.sm,
     },
     badgeText: {
-      fontFamily: type.fontFamily,
-      fontSize: 9,
-      fontWeight: 'bold',
+      fontFamily: type.sansMedium,
+      fontSize: 10,
+      fontWeight: '700',
       letterSpacing: 1,
     },
     card: {
@@ -145,7 +153,9 @@ function createStyles(palette: Palette) {
       borderRadius: radius.sm,
       borderWidth: 1,
       borderColor: palette.border,
-      padding: spacing.md,
+      padding: spacing.lg,
+      overflow: 'hidden',
+      ...shadow('sm', palette),
     },
     header: {
       flexDirection: 'row',
@@ -155,13 +165,13 @@ function createStyles(palette: Palette) {
     },
     title: {
       flex: 1,
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textPrimary,
       fontSize: type.md,
-      fontWeight: 'bold',
+      fontWeight: '700',
     },
     selectedTag: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.accent,
       fontSize: type.micro,
       fontWeight: 'bold',
@@ -176,22 +186,23 @@ function createStyles(palette: Palette) {
       flex: 1,
     },
     statLabel: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textMuted,
       fontSize: type.micro,
       letterSpacing: 1,
-      marginBottom: 2,
+      marginBottom: 3,
     },
+    // Monospace, so the four stats line up as a row of figures.
     statValue: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.mono,
       color: palette.textPrimary,
       fontSize: type.sm,
       fontWeight: 'bold',
     },
     hint: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.textMuted,
-      fontSize: type.micro,
+      fontSize: type.xs,
       marginTop: spacing.md,
     },
   });

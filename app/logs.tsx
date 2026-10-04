@@ -6,6 +6,9 @@
 // and almost never what gets read in the field.
 
 import Header from '@/components/Header';
+import Reveal from '@/components/ui/Reveal';
+import Screen from '@/components/ui/Screen';
+import Surface from '@/components/ui/Surface';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { useDialog } from '@/contexts/DialogContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -13,7 +16,6 @@ import { LogEntry, clearLog, removeLogEntry, subscribeToLog } from '@/services/E
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -78,11 +80,11 @@ export default function LogsScreen() {
   };
 
   return (
-    <SafeAreaProvider style={styles.safeArea}>
+    <Screen>
       <Header />
-      <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxl }}>
         <View style={local.titleRow}>
-          <Text style={local.screenTitle}>Fault Log</Text>
+          <Text style={styles.label}>Fault Log</Text>
           {entries.length > 0 && (
             <Pressable onPress={onClear} style={local.clearButton} hitSlop={8}>
               <Text style={local.clearText}>Clear</Text>
@@ -91,20 +93,25 @@ export default function LogsScreen() {
         </View>
 
         {entries.length === 0 ? (
-          <View style={local.emptyCard}>
-            <Ionicons name="checkmark-circle-outline" size={28} color={palette.ready} />
-            <Text style={local.emptyTitle}>Nothing has gone wrong</Text>
-            <Text style={local.emptyBody}>
-              Faults appear here as they happen — lost connections, refused commands, failed
-              self-tests — with an explanation and what to do about each one.
-            </Text>
-          </View>
+          <Reveal>
+            <Surface level="md" style={local.emptyCard}>
+              <Ionicons name="checkmark-circle-outline" size={32} color={palette.ready} />
+              <Text style={local.emptyTitle}>Nothing has gone wrong</Text>
+              <Text style={local.emptyBody}>
+                Faults appear here as they happen — lost connections, refused commands, failed
+                self-tests — with an explanation and what to do about each one.
+              </Text>
+            </Surface>
+          </Reveal>
         ) : (
-          entries.map((entry) => {
+          entries.map((entry, i) => {
             const colour = colourFor(entry.level);
             const open = expanded.has(entry.id);
             return (
-              <View key={entry.id} style={[local.card, { borderLeftColor: colour }]}>
+              // Keyed on the entry id, so a fault that arrives while the screen
+              // is open slides in rather than appearing fully drawn.
+              <Reveal key={entry.id} index={Math.min(i, 6)} style={local.cardWrap}>
+              <Surface level="sm" padded={false} style={[local.card, { borderLeftColor: colour }]}>
                 <View style={local.cardHead}>
                   <Ionicons name={LEVEL_ICON[entry.level]} size={16} color={colour} />
                   <Text style={[local.cardTitle, { color: palette.textPrimary }]}>{entry.title}</Text>
@@ -151,12 +158,13 @@ export default function LogsScreen() {
                     )}
                   </>
                 )}
-              </View>
+              </Surface>
+              </Reveal>
             );
           })
         )}
       </ScrollView>
-    </SafeAreaProvider>
+    </Screen>
   );
 }
 
@@ -168,22 +176,16 @@ function createStyles(palette: Palette) {
       justifyContent: 'space-between',
       marginBottom: spacing.lg,
     },
-    screenTitle: {
-      fontFamily: type.fontFamily,
-      fontSize: type.lg,
-      letterSpacing: 1,
-      textTransform: 'uppercase',
-      color: palette.textPrimary,
-    },
     clearButton: {
-      paddingHorizontal: spacing.md,
+      paddingHorizontal: spacing.lg,
       paddingVertical: spacing.sm,
       borderWidth: 1,
       borderColor: palette.border,
-      borderRadius: radius.sm,
+      borderRadius: radius.pill,
+      backgroundColor: alpha(palette.textSecondary, 0.08),
     },
     clearText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       fontSize: type.xs,
       letterSpacing: 1,
       textTransform: 'uppercase',
@@ -192,63 +194,57 @@ function createStyles(palette: Palette) {
     emptyCard: {
       alignItems: 'center',
       gap: spacing.md,
-      padding: spacing.xl,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: radius.sm,
-      backgroundColor: palette.surface,
+      paddingVertical: spacing.xl,
     },
     emptyTitle: {
-      fontFamily: type.fontFamily,
-      fontSize: type.sm,
-      letterSpacing: 1,
-      textTransform: 'uppercase',
+      fontFamily: type.sansMedium,
+      fontSize: type.lg,
+      fontWeight: '700',
       color: palette.textPrimary,
     },
     emptyBody: {
-      fontFamily: type.fontFamily,
-      fontSize: type.xs,
-      lineHeight: type.xs * 1.6,
+      fontFamily: type.sans,
+      fontSize: type.sm,
+      lineHeight: type.sm * 1.6,
       color: palette.textSecondary,
       textAlign: 'center',
     },
+    cardWrap: { marginBottom: spacing.md },
+    // Surface draws the fill and radius; the level colour is the left edge.
     card: {
-      backgroundColor: palette.surface,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderLeftWidth: 2,
-      borderRadius: radius.sm,
-      padding: spacing.md,
-      marginBottom: spacing.sm,
+      borderLeftWidth: 4,
+      padding: spacing.lg,
     },
     cardHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     cardTitle: {
       flex: 1,
-      fontFamily: type.fontFamily,
-      fontSize: type.sm,
-      fontWeight: 'bold',
+      fontFamily: type.sansMedium,
+      fontSize: type.md,
+      fontWeight: '700',
     },
-    time: { fontFamily: type.fontFamily, fontSize: type.micro, color: palette.textMuted },
+    // Monospace on the timestamp: a column of times at different widths is
+    // harder to scan than one that lines up.
+    time: { fontFamily: type.mono, fontSize: type.micro, color: palette.textMuted },
     source: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       fontSize: type.micro,
       letterSpacing: 1.5,
       color: palette.textMuted,
       marginTop: spacing.xs,
     },
     message: {
-      fontFamily: type.fontFamily,
-      fontSize: type.xs,
-      lineHeight: type.xs * 1.6,
+      fontFamily: type.sans,
+      fontSize: type.sm,
+      lineHeight: type.sm * 1.55,
       color: palette.textSecondary,
       marginTop: spacing.sm,
     },
-    fixRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+    fixRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
     fix: {
       flex: 1,
-      fontFamily: type.fontFamily,
-      fontSize: type.xs,
-      lineHeight: type.xs * 1.6,
+      fontFamily: type.sans,
+      fontSize: type.sm,
+      lineHeight: type.sm * 1.55,
       color: palette.textMuted,
     },
     detailToggle: {
@@ -259,22 +255,23 @@ function createStyles(palette: Palette) {
       minHeight: 28,
     },
     detailToggleText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       fontSize: type.micro,
       letterSpacing: 1.5,
       textTransform: 'uppercase',
       color: palette.textMuted,
     },
     detailBlock: {
-      backgroundColor: palette.bg,
+      backgroundColor: alpha(palette.bg, 0.6),
       borderWidth: 1,
       borderColor: palette.border,
-      borderRadius: radius.sm,
+      borderRadius: radius.xs,
       padding: spacing.md,
-      marginTop: spacing.xs,
+      marginTop: spacing.sm,
     },
+    // Stays monospace: this is the block that gets pasted into a bug report.
     detailText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.mono,
       fontSize: type.xs,
       lineHeight: type.xs * 1.5,
       color: alpha(palette.textPrimary, 0.9),

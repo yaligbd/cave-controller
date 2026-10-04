@@ -35,9 +35,12 @@ import Header from '@/components/Header';
 import SimulatorWebView from '@/components/SimulatorWebView';
 import FlightCard from '@/components/flightCard';
 import FlightDataModal from '@/components/FlightDataModal';
-import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
+import Button from '@/components/ui/Button';
+import Reveal from '@/components/ui/Reveal';
+import Screen from '@/components/ui/Screen';
+import Surface from '@/components/ui/Surface';
+import { alpha, Palette, radius, shadow, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Flight } from '@/types/flightT';
 import {
   deleteFlight,
   listFlights,
@@ -45,9 +48,7 @@ import {
   type StoredFlight,
 } from '@/services/FlightStore';
 import React, { useCallback, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Dimensions } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { Dimensions, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useDialog } from '@/contexts/DialogContext';
 import { useDroneConnection } from '@/contexts/DroneConnectionContext';
@@ -151,10 +152,10 @@ export default function SimulatorScreen() {
   } : undefined;
 
   return (
-    <SafeAreaProvider style={styles.safeArea}>
+    <Screen>
       <Header />
       
-      <ScrollView style={styles.bodyContainer}>
+      <ScrollView style={styles.bodyContainer} contentContainerStyle={{ paddingBottom: spacing.xxl }}>
         {/* 1. 3D Viewer at the top */}
         <View style={localStyles.simulatorContainer}>
           {isLiveMode ? (
@@ -173,7 +174,8 @@ export default function SimulatorScreen() {
         </View>
 
         {/* 2. Dashboard explicitly right under the hologram */}
-        <View style={localStyles.detailCard}>
+        <Reveal style={localStyles.detailWrap}>
+        <Surface level="md">
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             {/* flex:1 and one line, or a long flight name pushes the button
                 off the row. Android does not hit-test a view drawn outside its
@@ -185,23 +187,32 @@ export default function SimulatorScreen() {
           
           {!isLiveMode ? (
             selectedFlight ? (
-              <>
-                <Text style={localStyles.detailRow}>Duration: {selectedFlight.duration} s</Text>
-                <Text style={localStyles.detailRow}>Max Altitude: {selectedFlight.maxAltitude} m</Text>
-                <Text style={localStyles.detailRow}>Distance: {selectedFlight.distance} m</Text>
-                <Text style={localStyles.detailRow}>Samples: {selectedFlight.flightPath.time.length}</Text>
-              </>
+              <View style={localStyles.statGrid}>
+                <Stat palette={palette} label="Duration" value={`${selectedFlight.duration} s`} />
+                <Stat palette={palette} label="Max alt" value={`${selectedFlight.maxAltitude} m`} />
+                <Stat palette={palette} label="Distance" value={`${selectedFlight.distance} m`} />
+                <Stat palette={palette} label="Samples" value={String(selectedFlight.flightPath.time.length)} />
+              </View>
             ) : (
               <Text style={localStyles.detailRow}>Nothing downloaded yet.</Text>
             )
           ) : (
-            <>
-              <Text style={localStyles.detailRow}>Connected: {isConnected ? 'Yes' : 'No'}</Text>
-              <Text style={localStyles.detailRow}>Altitude: {((logValues.get('tele.z') || 0) / 1000.0).toFixed(2)} m</Text>
-              <Text style={localStyles.detailRow}>Battery: {((logValues.get('tele.vbat') || 0) / 1000.0).toFixed(2)} V</Text>
-            </>
+            <View style={localStyles.statGrid}>
+              <Stat palette={palette} label="Connected" value={isConnected ? 'Yes' : 'No'} />
+              <Stat
+                palette={palette}
+                label="Altitude"
+                value={`${((logValues.get('tele.z') || 0) / 1000.0).toFixed(2)} m`}
+              />
+              <Stat
+                palette={palette}
+                label="Battery"
+                value={`${((logValues.get('tele.vbat') || 0) / 1000.0).toFixed(2)} V`}
+              />
+            </View>
           )}
-        </View>
+        </Surface>
+        </Reveal>
 
         {/* A chevron, because the flights below are deliberately off-screen.
             Without it the screen looks like it ends at the card. */}
@@ -213,43 +224,44 @@ export default function SimulatorScreen() {
             to sit in the middle of the flight summary, where it read as part of
             the flight rather than as a command. */}
         <View style={localStyles.actionRow}>
-          <TouchableOpacity
-            style={[localStyles.liveModeBtn, isLiveMode && localStyles.liveModeBtnActive]}
+          <Button
+            label={isLiveMode ? 'Stop live' : 'Start live'}
+            tint={isLiveMode ? palette.warn : palette.accent}
+            variant="outline"
+            round="pill"
             onPress={() => setIsLiveMode(!isLiveMode)}
-          >
-            <Text style={localStyles.liveModeBtnText}>{isLiveMode ? 'STOP LIVE' : 'START LIVE'}</Text>
-          </TouchableOpacity>
+          />
         </View>
 
         {/* Pull the flight the DRONE recorded, as opposed to the copy the phone
             made while watching. This is the real store-and-forward path. */}
         {!isLiveMode && isConnected && (
-          <TouchableOpacity
-            style={[localStyles.downloadBtn, downloading && { opacity: 0.5 }]}
-            onPress={onDownload}
-            disabled={downloading}
-          >
-            <Text style={localStyles.downloadText}>
-              {downloading
-                ? 'DOWNLOADING…'
+          <Button
+            label={
+              downloading
+                ? 'Downloading…'
                 : droneSamples
-                  ? `DOWNLOAD FLIGHT FROM DRONE (${droneSamples} samples)`
-                  : 'DOWNLOAD FLIGHT FROM DRONE'}
-            </Text>
-          </TouchableOpacity>
+                  ? `Download from drone (${droneSamples} samples)`
+                  : 'Download flight from drone'
+            }
+            variant="solid"
+            disabled={downloading}
+            onPress={onDownload}
+            style={{ marginBottom: spacing.md }}
+          />
         )}
 
         {/* Saved flights. Real ones only -- see the note on the flights state. */}
         {!isLiveMode && flights.length === 0 && (
-          <View style={localStyles.banner}>
+          <Surface tone="glass" style={localStyles.banner}>
             <Text style={localStyles.bannerText}>
               No saved flights. Fly a mission and download it from the drone.
             </Text>
-          </View>
+          </Surface>
         )}
 
-        {!isLiveMode && flights.map((flight) => (
-          <View key={flight.id} style={localStyles.flightRow}>
+        {!isLiveMode && flights.map((flight, i) => (
+          <Reveal key={flight.id} index={Math.min(i, 6)} style={localStyles.flightRow}>
             {renamingId === flight.id ? (
               <View style={localStyles.renameBox}>
                 <TextInput
@@ -293,12 +305,37 @@ export default function SimulatorScreen() {
                 </View>
               </>
             )}
-          </View>
+          </Reveal>
         ))}
       </ScrollView>
 
       <FlightDataModal flight={dataFlight} onClose={() => setDataFlight(null)} />
-    </SafeAreaProvider>
+    </Screen>
+  );
+}
+
+/** One label-over-value cell in the dashboard grid. */
+function Stat({ palette, label, value }: { palette: Palette; label: string; value: string }) {
+  return (
+    <View style={{ minWidth: 76 }}>
+      <Text
+        style={{
+          fontFamily: type.sansMedium,
+          fontSize: type.micro,
+          letterSpacing: 1.2,
+          textTransform: 'uppercase',
+          color: palette.textMuted,
+          marginBottom: 3,
+        }}
+      >
+        {label}
+      </Text>
+      {/* Monospace: in live mode these tick over continuously, and a
+          proportional font makes the whole row twitch as the digits change. */}
+      <Text style={{ fontFamily: type.mono, fontSize: type.md, fontWeight: 'bold', color: palette.textPrimary }}>
+        {value}
+      </Text>
+    </View>
   );
 }
 
@@ -322,7 +359,7 @@ function createLocalStyles(palette: Palette) {
       overflow: 'hidden', 
     },
     moreHint: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textMuted,
       fontSize: type.xs,
       textAlign: 'center',
@@ -334,40 +371,41 @@ function createLocalStyles(palette: Palette) {
       justifyContent: 'flex-end',
       marginBottom: spacing.md,
     },
-    detailCard: {
-      backgroundColor: palette.surface,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: radius.sm,
-      padding: spacing.lg,
-      marginBottom: spacing.lg, // Changed from xxl to lg to keep standard spacing
+    detailWrap: {
+      marginBottom: spacing.lg,
     },
     detailTitle: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textPrimary,
       fontSize: type.lg,
-      fontWeight: 'bold',
+      fontWeight: '700',
       marginBottom: spacing.md,
     },
     detailRow: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.textSecondary,
       fontSize: type.sm,
       marginBottom: spacing.xs + 2,
     },
+    // Four numbers across rather than four sentences down: the same facts in a
+    // third of the height, which matters on a screen whose point is the view
+    // above it.
+    statGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'space-between',
+      rowGap: spacing.md,
+    },
     banner: {
-      backgroundColor: alpha(palette.warn, 0.1),
+      backgroundColor: alpha(palette.warn, 0.12),
       borderColor: palette.warn,
-      borderWidth: 1,
-      borderRadius: radius.sm,
-      padding: spacing.md,
       marginBottom: spacing.lg,
     },
     bannerText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.warn,
       textAlign: 'center',
-      fontSize: type.xs,
+      fontSize: type.sm,
       fontWeight: '600',
     },
     emptyViewer: {
@@ -377,33 +415,18 @@ function createLocalStyles(palette: Palette) {
       padding: spacing.lg,
     },
     emptyTitle: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textPrimary,
-      fontSize: type.lg,
-      fontWeight: 'bold',
+      fontSize: type.xl,
+      fontWeight: '700',
       marginBottom: spacing.sm,
     },
     emptyText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.textSecondary,
       fontSize: type.sm,
+      lineHeight: type.sm * 1.5,
       textAlign: 'center',
-    },
-    downloadBtn: {
-      borderWidth: 1,
-      borderColor: palette.accent,
-      backgroundColor: alpha(palette.accent, 0.12),
-      borderRadius: radius.sm,
-      paddingVertical: spacing.md,
-      alignItems: 'center',
-      marginBottom: spacing.md,
-    },
-    downloadText: {
-      fontFamily: type.fontFamily,
-      color: palette.accent,
-      fontSize: type.sm,
-      fontWeight: 'bold',
-      letterSpacing: 1,
     },
     flightRow: {
       marginBottom: spacing.md,
@@ -422,49 +445,35 @@ function createLocalStyles(palette: Palette) {
       borderWidth: 1,
       borderColor: palette.border,
       borderRadius: radius.sm,
-      padding: spacing.md,
+      padding: spacing.lg,
+      ...shadow('sm', palette),
     },
     renameInput: {
       flex: 1,
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.textPrimary,
-      fontSize: type.sm,
-      borderBottomWidth: 1,
-      borderBottomColor: palette.border,
-      paddingVertical: 4,
+      fontSize: type.md,
+      backgroundColor: palette.surfaceRaised,
+      borderWidth: 1,
+      borderColor: palette.border,
+      borderRadius: radius.xs,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
     },
     smallBtn: {
       borderWidth: 1,
       borderColor: palette.border,
-      borderRadius: radius.sm,
-      paddingVertical: 4,
-      paddingHorizontal: 10,
+      borderRadius: radius.pill,
+      paddingVertical: 6,
+      paddingHorizontal: spacing.md,
+      backgroundColor: alpha(palette.textSecondary, 0.08),
     },
     smallBtnText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textSecondary,
       fontSize: type.xs,
-      fontWeight: 'bold',
-    },
-    liveModeBtn: {
-      // palette.primary does not exist -- see the Palette interface in
-      // constants/theme.ts. It resolved to undefined, so this button had no
-      // background or border colour at all. accent is the intended one.
-      backgroundColor: alpha(palette.accent, 0.2),
-      borderColor: palette.accent,
-      borderWidth: 1,
-      borderRadius: radius.sm,
-      paddingVertical: 4,
-      paddingHorizontal: 8,
-    },
-    liveModeBtnActive: {
-      backgroundColor: alpha(palette.warn, 0.2),
-      borderColor: palette.warn,
-    },
-    liveModeBtnText: {
-      color: palette.textPrimary,
-      fontSize: type.xs,
-      fontWeight: 'bold',
+      fontWeight: '700',
+      letterSpacing: 0.8,
     }
   });
 }

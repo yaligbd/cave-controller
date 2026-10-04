@@ -252,7 +252,7 @@ export default function ConnectScreen() {
           })}
           <Text style={localStyles.caption}>
             A checkmark means the parameter is compiled into the firmware, not that the deck has been confirmed
-            physically attached. The self-test line below is the drone's own verdict.
+            physically attached. The self-test line below is the drone&apos;s own verdict.
           </Text>
 
           {/* The drone's boot self-test. When this fails the firmware never

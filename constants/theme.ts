@@ -164,6 +164,9 @@ export function useGradientId(): string {
 // ---------- Shared cross-screen primitives, built per-palette ----------
 export function createStyles(palette: Palette) {
   return StyleSheet.create({
+    // Superseded by components/ui/Screen.tsx, which adds the backdrop
+    // gradient. Kept because a plain flat-background screen is still a
+    // reasonable thing to want.
     safeArea: {
       flex: 1,
       backgroundColor: palette.bg,

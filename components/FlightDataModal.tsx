@@ -31,7 +31,7 @@
 // contexts/DroneConnectionContext.tsx and app/mission.tsx.
 // ===========================================================================
 
-import { Palette, radius, spacing, type } from '@/constants/theme';
+import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import type { StoredFlight } from '@/services/FlightStore';
 import React, { useMemo, useState } from 'react';
@@ -117,6 +117,7 @@ export default function FlightDataModal({ flight, onClose }: Props) {
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <View style={s.backdrop}>
         <View style={s.sheet}>
+          <View style={s.grabber} />
           <View style={s.header}>
             <View style={{ flex: 1 }}>
               <Text style={s.title} numberOfLines={1}>{flight.name}</Text>
@@ -248,12 +249,21 @@ function createStyles(palette: Palette) {
     },
     sheet: {
       backgroundColor: palette.bg,
-      borderTopLeftRadius: radius.md,
-      borderTopRightRadius: radius.md,
+      borderTopLeftRadius: radius.lg,
+      borderTopRightRadius: radius.lg,
       borderTopWidth: 1,
-      borderColor: palette.border,
+      borderColor: palette.glassEdge,
       padding: spacing.lg,
       maxHeight: '85%',
+    },
+    /** Says "this is a sheet you can dismiss" better than any label. */
+    grabber: {
+      alignSelf: 'center',
+      width: 44,
+      height: 4,
+      borderRadius: radius.pill,
+      backgroundColor: palette.borderStrong,
+      marginBottom: spacing.lg,
     },
     header: {
       flexDirection: 'row',
@@ -261,30 +271,33 @@ function createStyles(palette: Palette) {
       marginBottom: spacing.md,
     },
     title: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textPrimary,
-      fontSize: type.lg,
-      fontWeight: 'bold',
+      fontSize: type.xl,
+      fontWeight: '700',
+      letterSpacing: -0.3,
     },
     subtitle: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.textMuted,
-      fontSize: type.xs,
-      marginTop: 2,
+      fontSize: type.sm,
+      marginTop: 3,
     },
     closeBtn: {
       borderWidth: 1,
       borderColor: palette.border,
-      borderRadius: radius.sm,
-      paddingVertical: 6,
-      paddingHorizontal: 12,
+      borderRadius: radius.pill,
+      paddingVertical: 8,
+      paddingHorizontal: spacing.lg,
       marginLeft: spacing.md,
+      backgroundColor: alpha(palette.textSecondary, 0.08),
     },
     closeText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textSecondary,
       fontSize: type.xs,
-      fontWeight: 'bold',
+      fontWeight: '700',
+      letterSpacing: 0.8,
     },
     body: {
       maxHeight: 420,
@@ -320,14 +333,15 @@ function createStyles(palette: Palette) {
     },
     detail: {
       backgroundColor: palette.surfaceRaised,
-      borderLeftWidth: 2,
+      borderRadius: radius.xs,
+      borderLeftWidth: 3,
       borderLeftColor: palette.accent,
       paddingVertical: spacing.sm,
       paddingHorizontal: spacing.md,
       marginBottom: spacing.xs,
     },
     detailHead: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textPrimary,
       fontSize: type.xs,
       fontWeight: 'bold',
@@ -342,7 +356,7 @@ function createStyles(palette: Palette) {
       marginBottom: spacing.sm,
     },
     detKey: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textMuted,
       fontSize: 9,
       letterSpacing: 1,
@@ -375,15 +389,16 @@ function createStyles(palette: Palette) {
       fontWeight: 'bold',
     },
     empty: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.textSecondary,
-      fontSize: type.sm,
+      fontSize: type.md,
       paddingVertical: spacing.lg,
     },
     footnote: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.textMuted,
-      fontSize: type.micro,
+      fontSize: type.xs,
+      lineHeight: type.xs * 1.5,
       marginTop: spacing.md,
     },
   });

@@ -1,4 +1,8 @@
 import Header from '@/components/Header';
+import Button from '@/components/ui/Button';
+import Reveal from '@/components/ui/Reveal';
+import Screen from '@/components/ui/Screen';
+import Surface from '@/components/ui/Surface';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDialog } from '@/contexts/DialogContext';
@@ -9,7 +13,6 @@ import { deleteAllFlights } from '@/services/FlightStore';
 import { Prefs, setPref, subscribeToPrefs } from '@/services/Prefs';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 interface TunableConfig {
   fullName: string;
@@ -93,7 +96,7 @@ export default function SettingsScreen() {
   const renderTuningRow = (config: TunableConfig) => {
     const value = tuningValues[config.fullName];
     return (
-      <View key={config.fullName} style={localStyles.tuningCard}>
+      <Surface key={config.fullName} style={localStyles.tuningCard}>
         <Text style={localStyles.fieldLabel}>{config.label}</Text>
         <View style={localStyles.tuningControls}>
           <TouchableOpacity
@@ -120,30 +123,32 @@ export default function SettingsScreen() {
             <Text style={localStyles.stepButtonText}>+</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </Surface>
     );
   };
 
   return (
-    <SafeAreaProvider style={styles.safeArea}>
+    <Screen>
       <Header />
-      <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxl }}>
+        <Text style={styles.label}>Settings</Text>
+
         {/* ---------- ACCOUNT ---------- */}
         <Text style={localStyles.sectionTitle}>Account</Text>
-        <View style={localStyles.card}>
+        <Reveal index={0}>
+        <Surface level="md" style={localStyles.card}>
           <Text style={localStyles.cardHeading}>{account?.displayName ?? 'Not signed in'}</Text>
           <Text style={localStyles.bodyText}>{account?.email ?? '—'}</Text>
           <Text style={localStyles.captionText}>
             Signed in on this phone only. Flights are stored locally and are not synced yet.
           </Text>
-          <TouchableOpacity style={localStyles.dangerButton} onPress={handleSignOut}>
-            <Text style={localStyles.dangerButtonText}>Sign out</Text>
-          </TouchableOpacity>
-        </View>
+          <Button label="Sign out" tint={palette.fault} variant="outline" onPress={handleSignOut} />
+        </Surface>
+        </Reveal>
 
         {/* ---------- a) HARDWARE SETUP ---------- */}
         <Text style={localStyles.sectionTitle}>Hardware Setup</Text>
-        <View style={localStyles.card}>
+        <Surface style={localStyles.card}>
           <Text style={localStyles.bodyText}>• Ensure your Crazyflie is fully charged.</Text>
           <Text style={localStyles.bodyText}>
             • <Text style={{ fontWeight: 'bold', color: palette.warn }}>Prerequisite:</Text> Ensure your Crazyflie
@@ -152,8 +157,8 @@ export default function SettingsScreen() {
           <Text style={[localStyles.bodyText, { marginBottom: 0 }]}>
             • Keep the drone close to the phone when connecting over Bluetooth.
           </Text>
-        </View>
-        <View style={localStyles.card}>
+        </Surface>
+        <Surface style={localStyles.card}>
           <Text style={localStyles.cardHeading}>Flashing the firmware</Text>
           <Text style={localStyles.bodyText}>
             CaveBat firmware is flashed once from a PC over a Crazyradio, using{' '}
@@ -163,7 +168,7 @@ export default function SettingsScreen() {
           <Text style={[localStyles.captionText, { marginBottom: 0 }]}>
             Over-the-air flashing from the phone is planned for a later phase.
           </Text>
-        </View>
+        </Surface>
 
         {/* ---------- b) LIVE TUNING ---------- */}
         <Text style={localStyles.sectionTitle}>Live Tuning</Text>
@@ -173,11 +178,11 @@ export default function SettingsScreen() {
         </Text>
 
         {!isConnected && (
-          <View style={localStyles.warningBanner}>
+          <Surface tone="glass" style={localStyles.warningBanner}>
             <Text style={localStyles.warningText}>
               Warning: Drone not connected. Changes will not be synced to the Crazyflie.
             </Text>
-          </View>
+          </Surface>
         )}
 
         {availableTuningParams.length === 0 ? (
@@ -188,27 +193,27 @@ export default function SettingsScreen() {
 
         {/* ---------- c) APPEARANCE ---------- */}
         <Text style={localStyles.sectionTitle}>Appearance</Text>
-        <View style={[localStyles.card, localStyles.toggleRow]}>
-          <Text style={localStyles.bodyText}>Day mode</Text>
+        <Surface style={[localStyles.card, localStyles.toggleRow]}>
+          <Text style={localStyles.rowText}>Day mode</Text>
           <Switch
             value={mode === 'day'}
             onValueChange={toggleMode}
             trackColor={{ false: palette.borderStrong, true: palette.accent }}
             thumbColor={mode === 'day' ? palette.accent : palette.textMuted}
           />
-        </View>
+        </Surface>
 
         {/* ---------- d) OFFLINE MODE ---------- */}
         <Text style={localStyles.sectionTitle}>Offline Mode</Text>
-        <View style={[localStyles.card, localStyles.toggleRow]}>
-          <Text style={localStyles.bodyText}>Not implemented</Text>
+        <Surface style={[localStyles.card, localStyles.toggleRow]}>
+          <Text style={localStyles.rowText}>Not implemented</Text>
           <Switch
             value={false}
             disabled
             trackColor={{ false: palette.borderStrong, true: palette.borderStrong }}
             thumbColor={palette.textMuted}
           />
-        </View>
+        </Surface>
 
         {/* ---------- e) DATA ----------
             Switching a toggle OFF stops new records being written. It does NOT
@@ -217,9 +222,9 @@ export default function SettingsScreen() {
             mis-tapped switch would be unforgivable. */}
         <Text style={localStyles.sectionTitle}>Data</Text>
 
-        <View style={[localStyles.card, localStyles.toggleRow]}>
+        <Surface style={[localStyles.card, localStyles.toggleRow]}>
           <View style={{ flex: 1, marginRight: spacing.md }}>
-            <Text style={[localStyles.bodyText, { marginBottom: 2 }]}>Keep flights</Text>
+            <Text style={[localStyles.rowText, { marginBottom: 2 }]}>Keep flights</Text>
             <Text style={localStyles.captionText}>
               Store downloaded flights on this phone. Off: a flight is still drawn after
               it is downloaded, but is gone when you leave the screen.
@@ -231,11 +236,11 @@ export default function SettingsScreen() {
             trackColor={{ false: palette.borderStrong, true: palette.accent }}
             thumbColor={prefs.keepFlights ? palette.accent : palette.textMuted}
           />
-        </View>
+        </Surface>
 
-        <View style={[localStyles.card, localStyles.toggleRow]}>
+        <Surface style={[localStyles.card, localStyles.toggleRow]}>
           <View style={{ flex: 1, marginRight: spacing.md }}>
-            <Text style={[localStyles.bodyText, { marginBottom: 2 }]}>Keep fault log</Text>
+            <Text style={[localStyles.rowText, { marginBottom: 2 }]}>Keep fault log</Text>
             <Text style={localStyles.captionText}>
               Keep recorded faults, with their times, between sessions. Off: the log is
               cleared every time the app restarts.
@@ -247,91 +252,79 @@ export default function SettingsScreen() {
             trackColor={{ false: palette.borderStrong, true: palette.accent }}
             thumbColor={prefs.keepErrors ? palette.accent : palette.textMuted}
           />
-        </View>
+        </Surface>
 
-        <TouchableOpacity style={localStyles.deleteButton} onPress={handleDeleteFlights}>
-          <Text style={localStyles.deleteButtonText}>Delete all flights</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={localStyles.deleteButton} onPress={handleDeleteLog}>
-          <Text style={localStyles.deleteButtonText}>Clear fault log</Text>
-        </TouchableOpacity>
+        {/* Outline rather than solid, and both confirm first. A solid red
+            button invites the tap; these two should not. */}
+        <Button
+          label="Delete all flights"
+          tint={palette.fault}
+          variant="outline"
+          onPress={handleDeleteFlights}
+          style={{ marginBottom: spacing.md }}
+        />
+        <Button label="Clear fault log" tint={palette.fault} variant="outline" onPress={handleDeleteLog} />
       </ScrollView>
-    </SafeAreaProvider>
+    </Screen>
   );
 }
 
 function createLocalStyles(palette: Palette) {
   return StyleSheet.create({
     sectionTitle: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textMuted,
-      fontSize: type.micro,
+      fontSize: type.xs,
       letterSpacing: 1.5,
       textTransform: 'uppercase',
       marginTop: spacing.xl,
       marginBottom: spacing.md,
     },
+    // Surface draws the fill, border, radius and shadow.
     card: {
-      backgroundColor: palette.surface,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: radius.sm,
-      padding: spacing.lg,
       marginBottom: spacing.md,
     },
     cardHeading: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.textPrimary,
-      fontSize: type.sm,
-      fontWeight: 'bold',
+      fontSize: type.lg,
+      fontWeight: '700',
       marginBottom: spacing.sm,
     },
     bodyText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.textSecondary,
       fontSize: type.sm,
+      lineHeight: type.sm * 1.5,
       marginBottom: spacing.sm,
     },
+    /** A settings row's own label: darker and heavier than running prose. */
+    rowText: {
+      fontFamily: type.sansMedium,
+      color: palette.textPrimary,
+      fontSize: type.md,
+    },
     captionText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.textMuted,
       fontSize: type.xs,
+      lineHeight: type.xs * 1.5,
       marginBottom: spacing.md,
     },
-    dangerButton: {
-      minHeight: 44,
-      marginTop: spacing.sm,
-      borderRadius: radius.sm,
-      borderWidth: 1,
-      borderColor: palette.fault,
-      backgroundColor: alpha(palette.fault, 0.12),
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    dangerButtonText: {
-      fontFamily: type.fontFamily,
-      fontSize: type.xs,
-      letterSpacing: 1,
-      textTransform: 'uppercase',
-      color: palette.fault,
-    },
     warningBanner: {
-      backgroundColor: alpha(palette.fault, 0.1),
-      borderWidth: 1,
+      backgroundColor: alpha(palette.fault, 0.14),
       borderColor: palette.fault,
-      borderRadius: radius.sm,
-      padding: spacing.sm,
       marginBottom: spacing.md,
     },
     warningText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.fault,
       textAlign: 'center',
-      fontWeight: 'bold',
-      fontSize: type.xs,
+      fontWeight: '700',
+      fontSize: type.sm,
     },
     emptyText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sans,
       color: palette.textMuted,
       textAlign: 'center',
       fontSize: type.sm,
@@ -339,16 +332,11 @@ function createLocalStyles(palette: Palette) {
     },
     tuningCard: {
       marginBottom: spacing.md,
-      backgroundColor: palette.surface,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: radius.sm,
-      padding: spacing.lg,
     },
     fieldLabel: {
-      fontFamily: type.fontFamily,
-      fontSize: type.micro,
-      letterSpacing: 1.5,
+      fontFamily: type.sansMedium,
+      fontSize: type.xs,
+      letterSpacing: 1.2,
       textTransform: 'uppercase',
       color: palette.textMuted,
       marginBottom: spacing.md,
@@ -358,19 +346,24 @@ function createLocalStyles(palette: Palette) {
       alignItems: 'center',
       justifyContent: 'space-between',
     },
+    // Round, like the keypad's own steppers, so the same gesture looks the
+    // same wherever a number is nudged.
     stepButton: {
-      backgroundColor: palette.surfaceRaised,
+      width: 48,
+      height: 48,
+      borderRadius: radius.pill,
+      backgroundColor: alpha(palette.accent, 0.14),
       borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: radius.sm,
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.lg,
+      borderColor: alpha(palette.accent, 0.4),
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     stepButtonText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       color: palette.accent,
-      fontSize: type.lg,
-      fontWeight: 'bold',
+      fontSize: type.xl,
+      fontWeight: '700',
+      lineHeight: type.xl + 2,
     },
     valueInput: {
       backgroundColor: palette.surfaceRaised,
@@ -379,9 +372,9 @@ function createLocalStyles(palette: Palette) {
       borderRadius: radius.sm,
       paddingVertical: spacing.sm,
       paddingHorizontal: spacing.md,
-      width: 110,
+      width: 120,
       textAlign: 'center',
-      fontFamily: type.fontFamily,
+      fontFamily: type.mono,
       fontSize: type.readout,
       color: palette.textPrimary,
     },
@@ -389,23 +382,6 @@ function createLocalStyles(palette: Palette) {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-    },
-    deleteButton: {
-      borderWidth: 1,
-      borderColor: palette.fault,
-      backgroundColor: alpha(palette.fault, 0.12),
-      borderRadius: radius.sm,
-      paddingVertical: spacing.lg,
-      alignItems: 'center',
-      marginBottom: spacing.xxl,
-    },
-    deleteButtonText: {
-      fontFamily: type.fontFamily,
-      color: palette.fault,
-      fontSize: type.sm,
-      fontWeight: 'bold',
-      letterSpacing: 2,
-      textTransform: 'uppercase',
     },
   });
 }

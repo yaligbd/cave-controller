@@ -10,7 +10,11 @@
 // not about a field -- storage errors and the like.
 
 import BatIcon from '@/components/BatIcon';
-import { alpha, radius, spacing, type } from '@/constants/theme';
+import Button from '@/components/ui/Button';
+import { Gradient } from '@/components/ui/Gradient';
+import Reveal from '@/components/ui/Reveal';
+import Surface from '@/components/ui/Surface';
+import { alpha, radius, shadow, spacing, type } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDialog } from '@/contexts/DialogContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -19,7 +23,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -36,7 +39,7 @@ type Mode = 'signin' | 'signup';
 type FieldErrors = { name?: string; email?: string; password?: string };
 
 export default function AuthPanel({ mode }: { mode: Mode }) {
-  const { palette } = useTheme();
+  const { palette, mode: themeMode } = useTheme();
   const router = useRouter();
   const dialog = useDialog();
   const { signIn, signUp, busy } = useAuth();
@@ -46,6 +49,9 @@ export default function AuthPanel({ mode }: { mode: Mode }) {
   const [password, setPassword] = useState('');
   const [reveal, setReveal] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
+  // Which field has the caret. Three identical boxes with the keyboard over
+  // them is genuinely confusing on a phone; the active one gets the accent.
+  const [focused, setFocused] = useState<keyof FieldErrors | null>(null);
 
   const isSignUp = mode === 'signup';
 
@@ -56,90 +62,67 @@ export default function AuthPanel({ mode }: { mode: Mode }) {
         scroll: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl },
         brand: { alignItems: 'center', marginBottom: spacing.xxl, gap: spacing.md },
         wordmark: {
-          fontFamily: type.fontFamily,
-          fontSize: type.lg,
-          fontWeight: 'bold',
-          letterSpacing: 4,
+          fontFamily: type.sansMedium,
+          fontSize: type.xxl,
+          fontWeight: '700',
+          letterSpacing: 3,
           color: palette.textPrimary,
         },
         tagline: {
-          fontFamily: type.fontFamily,
-          fontSize: type.micro,
-          letterSpacing: 1.5,
-          textTransform: 'uppercase',
+          fontFamily: type.sans,
+          fontSize: type.sm,
+          letterSpacing: 1,
           color: palette.textMuted,
         },
         card: {
-          backgroundColor: palette.surface,
-          borderWidth: 1,
-          borderColor: palette.border,
-          borderRadius: radius.sm,
           padding: spacing.xl,
           gap: spacing.lg,
         },
         heading: {
-          fontFamily: type.fontFamily,
-          fontSize: type.md,
-          fontWeight: 'bold',
-          letterSpacing: 1.5,
-          textTransform: 'uppercase',
+          fontFamily: type.sansMedium,
+          fontSize: type.xl,
+          fontWeight: '700',
+          letterSpacing: -0.3,
           color: palette.textPrimary,
         },
         fieldLabel: {
-          fontFamily: type.fontFamily,
-          fontSize: type.micro,
-          letterSpacing: 1.5,
+          fontFamily: type.sansMedium,
+          fontSize: type.xs,
+          letterSpacing: 1.2,
           textTransform: 'uppercase',
           color: palette.textMuted,
-          marginBottom: spacing.xs,
+          marginBottom: spacing.sm,
         },
         inputRow: {
           flexDirection: 'row',
           alignItems: 'center',
-          backgroundColor: palette.bg,
-          borderWidth: 1,
+          backgroundColor: alpha(palette.bg, 0.6),
+          borderWidth: 1.5,
           borderRadius: radius.sm,
         },
         input: {
           flex: 1,
-          minHeight: 46,
-          paddingHorizontal: spacing.md,
-          fontFamily: type.fontFamily,
-          fontSize: type.sm,
+          minHeight: 52,
+          paddingHorizontal: spacing.lg,
+          fontFamily: type.sans,
+          fontSize: type.md,
           color: palette.textPrimary,
         },
-        revealButton: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+        revealButton: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
         fieldError: {
-          fontFamily: type.fontFamily,
+          fontFamily: type.sans,
           fontSize: type.xs,
           color: palette.fault,
           marginTop: spacing.xs,
         },
-        submit: {
-          minHeight: 48,
-          borderRadius: radius.sm,
-          borderWidth: 1,
-          borderColor: palette.accent,
-          backgroundColor: alpha(palette.accent, 0.15),
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        submitText: {
-          fontFamily: type.fontFamily,
-          fontSize: type.sm,
-          letterSpacing: 2,
-          textTransform: 'uppercase',
-          color: palette.accent,
-          fontWeight: 'bold',
-        },
         switchRow: { flexDirection: 'row', justifyContent: 'center', gap: spacing.sm, marginTop: spacing.lg },
-        switchText: { fontFamily: type.fontFamily, fontSize: type.xs, color: palette.textSecondary },
+        switchText: { fontFamily: type.sans, fontSize: type.sm, color: palette.textSecondary },
         switchLink: {
-          fontFamily: type.fontFamily,
-          fontSize: type.xs,
+          fontFamily: type.sansMedium,
+          fontSize: type.sm,
+          fontWeight: '700',
           color: palette.accent,
-          textTransform: 'uppercase',
-          letterSpacing: 1,
+          letterSpacing: 0.3,
         },
         // The honesty notice. Anyone using this deserves to know the account is
         // on the phone and protects nothing yet.
@@ -147,17 +130,15 @@ export default function AuthPanel({ mode }: { mode: Mode }) {
           flexDirection: 'row',
           gap: spacing.md,
           marginTop: spacing.xl,
-          padding: spacing.md,
-          borderWidth: 1,
-          borderColor: palette.border,
-          borderRadius: radius.sm,
-          backgroundColor: palette.warnBg,
+          backgroundColor: alpha(palette.warn, 0.12),
+          borderColor: alpha(palette.warn, 0.4),
+          ...shadow('sm', palette),
         },
         noticeText: {
           flex: 1,
-          fontFamily: type.fontFamily,
+          fontFamily: type.sans,
           fontSize: type.xs,
-          lineHeight: type.xs * 1.5,
+          lineHeight: type.xs * 1.55,
           color: palette.textSecondary,
         },
       }),
@@ -207,26 +188,32 @@ export default function AuthPanel({ mode }: { mode: Mode }) {
     }
   }
 
+  // An error outranks focus: a red box that turned blue when tapped would hide
+  // the thing the operator has to fix.
   function borderFor(field: keyof FieldErrors) {
-    return errors[field] ? palette.fault : palette.border;
+    if (errors[field]) return palette.fault;
+    if (focused === field) return palette.accent;
+    return palette.border;
   }
 
   return (
     <SafeAreaView style={styles.safe}>
+      <Gradient colors={palette.gradBackdrop} />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          <View style={styles.brand}>
-            <BatIcon size={44} />
+          <Reveal style={styles.brand} from={20}>
+            <BatIcon size={56} />
             <Text style={styles.wordmark} allowFontScaling={false}>
               CAVEBAT
             </Text>
             <Text style={styles.tagline}>Autonomous cave mapping</Text>
-          </View>
+          </Reveal>
 
-          <View style={styles.card}>
+          <Reveal index={1}>
+          <Surface level="lg" padded={false} style={styles.card}>
             <Text style={styles.heading}>{isSignUp ? 'Create account' : 'Sign in'}</Text>
 
             {isSignUp && (
@@ -244,6 +231,11 @@ export default function AuthPanel({ mode }: { mode: Mode }) {
                     placeholderTextColor={palette.textMuted}
                     autoCapitalize="words"
                     autoComplete="name"
+                    textContentType="name"
+                    returnKeyType="next"
+                    keyboardAppearance={themeMode === 'day' ? 'light' : 'dark'}
+                    onFocus={() => setFocused('name')}
+                    onBlur={() => setFocused(null)}
                   />
                 </View>
                 {!!errors.name && <Text style={styles.fieldError}>{errors.name}</Text>}
@@ -266,6 +258,11 @@ export default function AuthPanel({ mode }: { mode: Mode }) {
                   autoCorrect={false}
                   keyboardType="email-address"
                   autoComplete="email"
+                  textContentType="emailAddress"
+                  returnKeyType="next"
+                  keyboardAppearance={themeMode === 'day' ? 'light' : 'dark'}
+                  onFocus={() => setFocused('email')}
+                  onBlur={() => setFocused(null)}
                 />
               </View>
               {!!errors.email && <Text style={styles.fieldError}>{errors.email}</Text>}
@@ -288,6 +285,10 @@ export default function AuthPanel({ mode }: { mode: Mode }) {
                   autoCorrect={false}
                   onSubmitEditing={submit}
                   returnKeyType="go"
+                  textContentType={isSignUp ? 'newPassword' : 'password'}
+                  keyboardAppearance={themeMode === 'day' ? 'light' : 'dark'}
+                  onFocus={() => setFocused('password')}
+                  onBlur={() => setFocused(null)}
                 />
                 <Pressable
                   style={styles.revealButton}
@@ -305,19 +306,12 @@ export default function AuthPanel({ mode }: { mode: Mode }) {
               {!!errors.password && <Text style={styles.fieldError}>{errors.password}</Text>}
             </View>
 
-            <Pressable
-              style={({ pressed }) => [styles.submit, { opacity: busy ? 0.6 : pressed ? 0.8 : 1 }]}
-              onPress={submit}
+            <Button
+              label={busy ? 'Working…' : isSignUp ? 'Create account' : 'Sign in'}
+              variant="solid"
               disabled={busy}
-            >
-              {busy ? (
-                <ActivityIndicator color={palette.accent} />
-              ) : (
-                <Text style={styles.submitText} allowFontScaling={false}>
-                  {isSignUp ? 'Create account' : 'Sign in'}
-                </Text>
-              )}
-            </Pressable>
+              onPress={submit}
+            />
 
             <View style={styles.switchRow}>
               <Text style={styles.switchText}>
@@ -327,16 +321,17 @@ export default function AuthPanel({ mode }: { mode: Mode }) {
                 <Text style={styles.switchLink}>{isSignUp ? 'Sign in' : 'Create one'}</Text>
               </Pressable>
             </View>
-          </View>
+          </Surface>
+          </Reveal>
 
-          <View style={styles.notice}>
-            <Ionicons name="information-circle" size={16} color={palette.warn} />
+          <Surface tone="glass" style={styles.notice}>
+            <Ionicons name="information-circle" size={18} color={palette.warn} />
             <Text style={styles.noticeText}>
               Accounts are stored on this phone only. Nothing is sent anywhere and nothing is
               shared between devices yet — that arrives with the server, which will also sync your
               flights.
             </Text>
-          </View>
+          </Surface>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

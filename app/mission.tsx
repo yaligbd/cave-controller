@@ -58,10 +58,14 @@
 // ===========================================================================
 
 import Header from '@/components/Header';
+import Button from '@/components/ui/Button';
+import NumberField from '@/components/ui/NumberField';
+import Reveal from '@/components/ui/Reveal';
+import Screen from '@/components/ui/Screen';
+import Surface from '@/components/ui/Surface';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import React, { useMemo, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { useDialog } from '@/contexts/DialogContext';
 import { useDroneConnection } from '@/contexts/DroneConnectionContext';
@@ -289,50 +293,69 @@ export default function MissionScreen() {
   const localStyles = useMemo(() => createLocalStyles(palette), [palette]);
 
   return (
-    <SafeAreaProvider style={styles.safeArea}>
+    <Screen>
       <Header />
 
-      <View style={[styles.bodyContainer, { padding: spacing.lg }]}>
+      <ScrollView
+        contentContainerStyle={localStyles.body}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.label}>Pre-Flight Checklist</Text>
 
-        <View
-          style={[
-            localStyles.statusBlock,
-            { backgroundColor: STATUS_BG[status.level], borderLeftColor: STATUS_COLOR[status.level] },
-          ]}
-        >
-          <Text style={[localStyles.statusText, { color: STATUS_COLOR[status.level] }]}>
-            {'●'} {status.message.toUpperCase()}
-          </Text>
-          {status.subMessage && <Text style={localStyles.statusSubText}>{status.subMessage}</Text>}
-        </View>
+        <Reveal index={0} style={localStyles.block}>
+          <Surface
+            tone="glass"
+            level="md"
+            style={[
+              localStyles.statusBlock,
+              { backgroundColor: STATUS_BG[status.level], borderLeftColor: STATUS_COLOR[status.level] },
+            ]}
+          >
+            <View style={localStyles.statusRow}>
+              <View style={[localStyles.statusDot, { backgroundColor: STATUS_COLOR[status.level] }]} />
+              <Text style={[localStyles.statusText, { color: STATUS_COLOR[status.level] }]}>
+                {status.message.toUpperCase()}
+              </Text>
+            </View>
+            {status.subMessage && <Text style={localStyles.statusSubText}>{status.subMessage}</Text>}
+          </Surface>
+        </Reveal>
 
-        <View style={localStyles.card}>
-          <Text style={localStyles.fieldLabel}>Hover Time (seconds)</Text>
-          <TextInput
-            onChangeText={(text) => setTimer(Number(text))}
-            keyboardType="numeric"
-            value={timer.toString()}
-            style={localStyles.input}
-            placeholderTextColor={palette.textMuted}
+        <Reveal index={1} style={localStyles.block}>
+        <Surface level="md">
+          {/* The three numbers go through our own keypad rather than the system
+              keyboard, which on Android covers the Take Off and Abort buttons
+              and offers a decimal point for values that are whole. */}
+          <NumberField
+            label="Hover Time"
+            unit="s"
+            value={timer}
+            onChange={setTimer}
+            min={TIMER_MIN}
+            max={TIMER_MAX}
+            step={5}
+            presets={[15, 30, 45, 60]}
           />
-
-          <Text style={localStyles.fieldLabel}>Max Altitude (mm)</Text>
-          <TextInput
-            onChangeText={(text) => setHeight(Number(text))}
-            keyboardType="numeric"
-            value={height.toString()}
-            style={localStyles.input}
-            placeholderTextColor={palette.textMuted}
+          <NumberField
+            label="Max Altitude"
+            unit="mm"
+            value={height}
+            onChange={setHeight}
+            min={HEIGHT_MIN}
+            max={HEIGHT_MAX}
+            step={50}
+            presets={[300, 500, 800, 1000]}
           />
-
-          <Text style={localStyles.fieldLabel}>Measure Distance (cm)</Text>
-          <TextInput
-            onChangeText={(text) => setSampleDist(Number(text))}
-            keyboardType="numeric"
-            value={sampleDist.toString()}
-            style={localStyles.input}
-            placeholderTextColor={palette.textMuted}
+          <NumberField
+            label="Measure Distance"
+            unit="cm"
+            value={sampleDist}
+            onChange={setSampleDist}
+            min={SAMPLEDIST_MIN}
+            max={SAMPLEDIST_MAX}
+            step={5}
+            presets={[5, 10, 25, 50]}
           />
 
           <Text style={localStyles.fieldLabel}>Flight Mode</Text>
@@ -344,13 +367,11 @@ export default function MissionScreen() {
                   key={m.value}
                   style={[
                     localStyles.modeButton,
-                    on
-                      ? { borderColor: palette.ready, backgroundColor: alpha(palette.ready, 0.12) }
-                      : { borderColor: palette.border, backgroundColor: palette.surface },
+                    on ? { backgroundColor: alpha(palette.ready, 0.18) } : null,
                   ]}
                   onPress={() => setFlightMode(m.value)}
                 >
-                  <Text style={[localStyles.modeText, { color: on ? palette.ready : palette.textMuted }]}>
+                  <Text style={[localStyles.modeText, { color: on ? palette.ready : palette.textSecondary }]}>
                     {m.label}
                   </Text>
                 </TouchableOpacity>
@@ -360,28 +381,29 @@ export default function MissionScreen() {
           <Text style={localStyles.modeHint}>
             {FLIGHT_MODES[flightMode].hint}
           </Text>
-        </View>
+        </Surface>
+        </Reveal>
 
-        <TouchableOpacity
-          style={[
-            localStyles.takeOffButton,
-            canTakeOff
-              ? { borderColor: palette.ready, backgroundColor: alpha(palette.ready, 0.12) }
-              : { borderColor: palette.borderStrong, backgroundColor: palette.surface },
-          ]}
-          onPress={handleTakeOff}
-          disabled={!canTakeOff}
-        >
-          <Text style={[localStyles.buttonText, { color: canTakeOff ? palette.ready : palette.textMuted }]}>
-            {flying ? 'Mission In Progress' : 'Take Off'}
-          </Text>
-        </TouchableOpacity>
+        <Reveal index={2} style={localStyles.block}>
+          {/* Take Off is the only solid-filled button on the screen, because it
+              is the only one that starts the motors. */}
+          <Button
+            label={flying ? 'Mission In Progress' : 'Take Off'}
+            tint={palette.ready}
+            variant="solid"
+            disabled={!canTakeOff}
+            onPress={handleTakeOff}
+          />
+        </Reveal>
 
+        {/* ABORT. Still a bare TouchableOpacity on purpose -- see the header of
+            this file. Nothing goes in front of this press, including a press
+            animation, so it is restyled rather than replaced. */}
         <TouchableOpacity
           style={[
             localStyles.abortButton,
             isConnected
-              ? { borderColor: palette.fault, backgroundColor: alpha(palette.fault, 0.12) }
+              ? { borderColor: palette.fault, backgroundColor: alpha(palette.fault, 0.14) }
               : { borderColor: palette.borderStrong, backgroundColor: palette.surface },
           ]}
           onPress={handleAbort}
@@ -391,103 +413,97 @@ export default function MissionScreen() {
             Abort
           </Text>
         </TouchableOpacity>
-      </View>
-    </SafeAreaProvider>
+      </ScrollView>
+    </Screen>
   );
 }
 
 function createLocalStyles(palette: Palette) {
   return StyleSheet.create({
+    body: { padding: spacing.lg, paddingBottom: spacing.xxl },
+    /** Vertical rhythm between panels, now that each one is its own Reveal. */
+    block: { marginTop: spacing.lg },
+    // The status colour arrives as a left border and a tinted fill; Surface
+    // supplies the radius, sheen and shadow.
     statusBlock: {
-      borderLeftWidth: 3,
-      borderRadius: radius.sm,
-      padding: spacing.lg,
-      marginBottom: spacing.lg,
+      borderLeftWidth: 4,
+    },
+    statusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    statusDot: {
+      width: 10,
+      height: 10,
+      borderRadius: radius.pill,
+      marginRight: spacing.sm,
     },
     statusText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       fontSize: type.md,
-      fontWeight: 'bold',
-      letterSpacing: 1,
+      fontWeight: '700',
+      letterSpacing: 1.2,
       textTransform: 'uppercase',
+      flexShrink: 1,
     },
     statusSubText: {
-      fontFamily: type.fontFamily,
-      fontSize: type.xs,
+      fontFamily: type.sans,
+      fontSize: type.sm,
       color: palette.textSecondary,
       marginTop: spacing.xs,
     },
-    card: {
-      backgroundColor: palette.surface,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: radius.sm,
-      padding: spacing.lg,
-      marginBottom: spacing.lg,
-    },
     fieldLabel: {
-      fontFamily: type.fontFamily,
-      fontSize: type.micro,
-      letterSpacing: 1.5,
+      fontFamily: type.sansMedium,
+      fontSize: type.xs,
+      letterSpacing: 1.2,
       textTransform: 'uppercase',
       color: palette.textMuted,
       marginBottom: spacing.sm,
     },
-    input: {
-      backgroundColor: palette.surfaceRaised,
+    // One segmented control rather than three separate buttons: the three modes
+    // are a single choice, and a shared track says so where three gaps did not.
+    modeRow: {
+      flexDirection: 'row',
+      gap: spacing.xs,
+      padding: spacing.xs,
+      borderRadius: radius.sm,
+      backgroundColor: alpha(palette.bg, 0.5),
       borderWidth: 1,
       borderColor: palette.border,
-      borderRadius: radius.sm,
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.md,
-      marginBottom: spacing.lg,
-      fontFamily: type.fontFamily,
-      fontSize: type.readout,
-      color: palette.textPrimary,
     },
-    modeRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  modeButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-  },
-  modeText: {
-    fontFamily: type.fontFamily,
-    // Smaller than the other buttons: three labels have to share one row on a
-    // phone, and "WALL RIGHT" must not wrap.
-    fontSize: type.xs,
-    fontWeight: 'bold',
-    letterSpacing: 1,
-  },
-  modeHint: {
-    fontFamily: type.fontFamily,
-    color: palette.textMuted,
-    fontSize: type.micro,
-    marginTop: spacing.sm,
-  },
-  takeOffButton: {
-      borderWidth: 1,
-      borderRadius: radius.sm,
-      paddingVertical: spacing.lg,
+    modeButton: {
+      flex: 1,
+      borderRadius: radius.xs,
+      paddingVertical: spacing.md,
       alignItems: 'center',
-      marginBottom: spacing.md,
+    },
+    modeText: {
+      fontFamily: type.sansMedium,
+      // Smaller than the other buttons: three labels have to share one row on a
+      // phone, and "WALL RIGHT" must not wrap.
+      fontSize: type.xs,
+      fontWeight: '700',
+      letterSpacing: 0.6,
+    },
+    modeHint: {
+      fontFamily: type.sans,
+      color: palette.textMuted,
+      fontSize: type.xs,
+      lineHeight: type.xs * 1.5,
+      marginTop: spacing.md,
     },
     abortButton: {
       borderWidth: 1,
       borderRadius: radius.sm,
-      paddingVertical: spacing.md,
+      paddingVertical: spacing.md + 2,
       alignItems: 'center',
+      marginTop: spacing.md,
     },
     buttonText: {
-      fontFamily: type.fontFamily,
+      fontFamily: type.sansMedium,
       fontSize: type.sm,
-      fontWeight: 'bold',
-      letterSpacing: 2,
+      fontWeight: '700',
+      letterSpacing: 1.5,
       textTransform: 'uppercase',
     },
   });

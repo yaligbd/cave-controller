@@ -18,11 +18,12 @@
 // detail is what gets photographed and pasted into a log when something needs
 // diagnosing.
 
-import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
+import { alpha, Palette, radius, shadow, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 
 export type DialogVariant = 'error' | 'warn' | 'info' | 'success';
 
@@ -80,14 +81,15 @@ export default function AppDialog({
         card: {
           backgroundColor: palette.surface,
           borderWidth: 1,
-          borderColor: palette.borderStrong,
-          borderRadius: radius.sm,
+          borderColor: palette.glassEdge,
+          borderRadius: radius.md,
           overflow: 'hidden',
           maxHeight: '80%',
+          ...shadow('lg', palette),
         },
         // A coloured bar rather than a coloured card. The severity needs to be
         // readable at a glance without tinting the text behind it.
-        accentBar: { height: 2, backgroundColor: colours.fg },
+        accentBar: { height: 3, backgroundColor: colours.fg },
         head: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -96,33 +98,32 @@ export default function AppDialog({
           paddingBottom: spacing.md,
         },
         iconWell: {
-          width: 32,
-          height: 32,
-          borderRadius: radius.sm,
+          width: 40,
+          height: 40,
+          borderRadius: radius.pill,
           backgroundColor: colours.bg,
           alignItems: 'center',
           justifyContent: 'center',
         },
         title: {
           flex: 1,
-          fontFamily: type.fontFamily,
-          fontSize: type.md,
-          fontWeight: 'bold',
-          letterSpacing: 1,
-          textTransform: 'uppercase',
+          fontFamily: type.sansMedium,
+          fontSize: type.lg,
+          fontWeight: '700',
+          letterSpacing: -0.2,
           color: palette.textPrimary,
           writingDirection: 'ltr',
         },
         body: { paddingHorizontal: spacing.lg },
         message: {
-          fontFamily: type.fontFamily,
-          fontSize: type.sm,
-          lineHeight: type.sm * 1.6,
+          fontFamily: type.sans,
+          fontSize: type.md,
+          lineHeight: type.md * 1.55,
           color: palette.textSecondary,
           writingDirection: 'ltr',
         },
         detailLabel: {
-          fontFamily: type.fontFamily,
+          fontFamily: type.sansMedium,
           fontSize: type.micro,
           letterSpacing: 1.5,
           textTransform: 'uppercase',
@@ -131,14 +132,15 @@ export default function AppDialog({
           marginBottom: spacing.xs,
         },
         detailBlock: {
-          backgroundColor: palette.bg,
+          backgroundColor: alpha(palette.bg, 0.7),
           borderWidth: 1,
           borderColor: palette.border,
-          borderRadius: radius.sm,
+          borderRadius: radius.xs,
           padding: spacing.md,
         },
+        // Stays monospace: this is the text that gets pasted into a bug report.
         detailText: {
-          fontFamily: type.fontFamily,
+          fontFamily: type.mono,
           fontSize: type.xs,
           lineHeight: type.xs * 1.5,
           color: palette.textPrimary,
@@ -151,22 +153,35 @@ export default function AppDialog({
           padding: spacing.lg,
         },
         button: {
-          minHeight: 44,
-          paddingHorizontal: spacing.lg,
-          borderRadius: radius.sm,
+          minHeight: 46,
+          paddingHorizontal: spacing.xl,
+          borderRadius: radius.pill,
           borderWidth: 1,
           alignItems: 'center',
           justifyContent: 'center',
         },
         buttonText: {
-          fontFamily: type.fontFamily,
-          fontSize: type.xs,
+          fontFamily: type.sansMedium,
+          fontSize: type.sm,
+          fontWeight: '700',
           letterSpacing: 1,
           textTransform: 'uppercase',
         },
       }),
     [palette, colours]
   );
+
+  const appear = useSharedValue(0);
+  useEffect(() => {
+    appear.value = spec
+      ? withSpring(1, { damping: 18, stiffness: 240 })
+      : withTiming(0, { duration: 120 });
+  }, [spec, appear]);
+
+  const enter = useAnimatedStyle(() => ({
+    opacity: appear.value,
+    transform: [{ scale: 0.94 + appear.value * 0.06 }],
+  }));
 
   const actions: DialogAction[] =
     spec?.actions && spec.actions.length > 0 ? spec.actions : [{ label: 'OK', cancel: true }];
@@ -181,7 +196,10 @@ export default function AppDialog({
       onRequestClose={() => onDismiss(actions.find((a) => a.cancel) ?? actions[actions.length - 1])}
     >
       <View style={styles.backdrop}>
-        <View style={styles.card}>
+        {/* The card arrives slightly small and settles. A dialog that appears
+            at full size on an already-dimmed screen is easy to miss entirely
+            when it replaces one that was already open. */}
+        <Animated.View style={[styles.card, enter]}>
           <View style={styles.accentBar} />
 
           <View style={styles.head}>
@@ -233,7 +251,7 @@ export default function AppDialog({
               );
             })}
           </View>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
