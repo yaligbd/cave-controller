@@ -94,6 +94,12 @@ export interface StoredFlight extends Flight {
   savedAt: number;
   /** Kept so a flight can be re-derived if the display format ever changes. */
   samples: RawSample[];
+  /**
+   * Starred by the operator. Optional because every flight saved before this
+   * existed has no such field, and `undefined` reads as false everywhere it is
+   * used -- so old flights need no migration.
+   */
+  favourite?: boolean;
 }
 
 async function ensureDir(): Promise<void> {
@@ -246,7 +252,13 @@ export async function listFlights(): Promise<StoredFlight[]> {
         console.warn(`[flights] could not read ${n}, skipping`);
       }
     }
-    return out.sort((a, b) => b.savedAt - a.savedAt);
+    // Starred flights first, then newest first within each group. A flight is
+    // starred precisely because it is worth coming back to, and the newest
+    // flight pushes it down the list within an afternoon of testing otherwise.
+    return out.sort((a, b) => {
+      if (!!a.favourite !== !!b.favourite) return a.favourite ? -1 : 1;
+      return b.savedAt - a.savedAt;
+    });
   } catch (e) {
     console.warn('[flights] list failed:', e);
     return [];
@@ -268,6 +280,26 @@ export async function saveFlight(f: StoredFlight): Promise<boolean> {
     return true;
   } catch (e) {
     console.error('[flights] SAVE FAILED:', e);
+    return false;
+  }
+}
+
+/**
+ * Stars or unstars a flight.
+ *
+ * Reads the file back before writing rather than taking the caller's copy: the
+ * list in memory holds a flight as it was when the screen last loaded, and
+ * writing that whole object back would quietly undo a rename made since.
+ */
+export async function setFavourite(id: number, favourite: boolean): Promise<boolean> {
+  try {
+    const raw = await FileSystem.readAsStringAsync(fileFor(String(id)));
+    const f = JSON.parse(raw) as StoredFlight;
+    f.favourite = favourite;
+    await FileSystem.writeAsStringAsync(fileFor(String(id)), JSON.stringify(f));
+    return true;
+  } catch (e) {
+    console.warn('[flights] favourite failed:', e);
     return false;
   }
 }

@@ -36,14 +36,17 @@ import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { flightKind, type FlightKind } from '@/services/FlightStore';
 import { Flight } from '@/types/flightT';
+import { Ionicons } from '@expo/vector-icons';
 import React, { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 interface FlightCardProps {
-  flight: Flight & { samples?: any[] };
+  flight: Flight & { samples?: any[]; favourite?: boolean };
   onPress?: () => void;
   /** Draw as selected. The list highlights whichever flight the 3D view shows. */
   selected?: boolean;
+  /** Tapping the star. Omitted where starring makes no sense. */
+  onToggleFavourite?: () => void;
 }
 
 /** Seconds as m:ss, because "185 s" makes you do arithmetic to picture it. */
@@ -54,7 +57,7 @@ function formatDuration(seconds: number): string {
   return `${m}m ${String(s).padStart(2, '0')}s`;
 }
 
-export default function FlightCard({ flight, onPress, selected }: FlightCardProps) {
+export default function FlightCard({ flight, onPress, selected, onToggleFavourite }: FlightCardProps) {
   const { palette } = useTheme();
   const s = useMemo(() => createStyles(palette), [palette]);
 
@@ -74,7 +77,11 @@ export default function FlightCard({ flight, onPress, selected }: FlightCardProp
   // from the moment it went over. Opening the wrong one and seeing nonsense
   // reads as the app being broken.
   const kind: FlightKind = flightKind(flight);
-  const tone = KIND_TONE[kind];
+  // A STAR OUTRANKS THE KIND. The kind's colour says where a flight came from,
+  // which matters until you have decided a flight is worth keeping -- after
+  // that, finding it again is what matters, and gold is the only colour in the
+  // app the operator put there themselves. The kind is still on the badge.
+  const tone = flight.favourite ? FAVOURITE_TONE : KIND_TONE[kind];
 
   return (
     <Tappable onPress={onPress}>
@@ -88,9 +95,28 @@ export default function FlightCard({ flight, onPress, selected }: FlightCardProp
         ]}
       >
       <View style={s.header}>
+        {!!onToggleFavourite && (
+          // Its own Pressable inside the card's: a tap on the star must not
+          // also open the flight. hitSlop because the icon alone is a smaller
+          // target than a thumb.
+          <Pressable
+            onPress={onToggleFavourite}
+            hitSlop={12}
+            style={s.star}
+            accessibilityLabel={flight.favourite ? 'Remove from favourites' : 'Add to favourites'}
+          >
+            <Ionicons
+              name={flight.favourite ? 'star' : 'star-outline'}
+              size={20}
+              color={flight.favourite ? palette.gold : palette.textMuted}
+            />
+          </Pressable>
+        )}
         <Text style={s.title} numberOfLines={1}>{flight.name}</Text>
-        <View style={[s.badge, { backgroundColor: alpha(tone.line(palette), 0.18) }]}>
-          <Text style={[s.badgeText, { color: tone.line(palette) }]}>{tone.label}</Text>
+        <View style={[s.badge, { backgroundColor: alpha(KIND_TONE[kind].line(palette), 0.18) }]}>
+          <Text style={[s.badgeText, { color: KIND_TONE[kind].line(palette) }]}>
+            {KIND_TONE[kind].label}
+          </Text>
         </View>
         {selected && <Text style={s.selectedTag}>SHOWING</Text>}
       </View>
@@ -116,6 +142,13 @@ const KIND_TONE: Record<FlightKind, {
   drone:   { label: 'DRONE',   bg: (p) => p.surface,  line: (p) => p.border },
   phone:   { label: 'PHONE',   bg: (p) => p.warnBg,   line: (p) => p.warn },
   crashed: { label: 'CRASHED', bg: (p) => p.faultBg,  line: (p) => p.fault },
+};
+
+/** What a starred card is drawn in, whatever kind it is. */
+const FAVOURITE_TONE = {
+  label: 'FAVOURITE',
+  bg: (p: Palette) => p.goldBg,
+  line: (p: Palette) => p.gold,
 };
 
 function Stat({ palette, label, value }: { palette: Palette; label: string; value: string }) {
@@ -157,6 +190,9 @@ function createStyles(palette: Palette) {
       alignItems: 'center',
       justifyContent: 'space-between',
       marginBottom: spacing.md,
+    },
+    star: {
+      marginRight: spacing.sm,
     },
     title: {
       flex: 1,

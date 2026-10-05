@@ -45,6 +45,7 @@ import {
   deleteFlight,
   listFlights,
   renameFlight,
+  setFavourite,
   type StoredFlight,
 } from '@/services/FlightStore';
 import React, { useCallback, useMemo, useState } from 'react';
@@ -128,6 +129,14 @@ export default function SimulatorScreen() {
     setRenamingId(null);
     if (!name || name === f.name) return;
     await renameFlight(f.id, name);
+    reload();
+  };
+
+  // Starred flights sort to the top of the list, so the card moves under the
+  // thumb that tapped it. That is the point -- a star is for finding a flight
+  // again -- but it is worth knowing it is deliberate.
+  const onToggleFavourite = async (f: StoredFlight) => {
+    await setFavourite(f.id, !f.favourite);
     reload();
   };
 
@@ -310,6 +319,7 @@ export default function SimulatorScreen() {
                     setSelectedFlight(flight);
                     setDataFlight(flight);
                   }}
+                  onToggleFavourite={() => onToggleFavourite(flight)}
                 />
                 <View style={localStyles.flightActions}>
                   <TouchableOpacity

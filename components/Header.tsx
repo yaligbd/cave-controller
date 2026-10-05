@@ -4,11 +4,12 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { Href, Link, usePathname } from 'expo-router';
 import React, { useEffect, useMemo, useRef } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Linking, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Import our global Drone Context
+import { useDialog } from '@/contexts/DialogContext';
 import { useDroneConnection } from '@/contexts/DroneConnectionContext';
 
 const NAV_ITEMS: { href: Href; label: string }[] = [
@@ -26,8 +27,9 @@ const NAV_ITEM_WIDTH_ESTIMATE = 100;
 
 export default function Header() {
   // Extract the variables we need
-  const { isConnected, bleOn, enableBle, disconnectFromDrone } = useDroneConnection();
+  const { isConnected, bleOn, enableBle, disableBle } = useDroneConnection();
   const { palette } = useTheme();
+  const dialog = useDialog();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const navScrollRef = useRef<ScrollView>(null);
@@ -43,18 +45,45 @@ export default function Header() {
   // THIS BUTTON IS BLUETOOTH, NOT THE DRONE.
   //
   // It used to start a scan, which made one icon mean two unrelated things:
-  // whether the radio was on, and whether a drone was found. Tapping it when
-  // Bluetooth was off did nothing visible and looked broken.
+  // whether the radio was on, and whether a drone was found. Finding a drone is
+  // the Connect button's job, on the screen where that is what you came to do.
+  // This is a switch for the radio and nothing else.
   //
-  // Now it answers for the radio alone -- green when the adapter is on, tap to
-  // switch it on. Finding a drone is the Scan button's job, on the screen where
-  // that is what you came to do. Disconnecting stays here because it is the
-  // only control always on screen while something is connected.
-  const handleBluetoothPress = () => {
-    if (isConnected) {
-      disconnectFromDrone();
-    } else if (!bleOn) {
-      void enableBle();
+  // ON WORKS. OFF USUALLY CANNOT, AND THAT IS ANDROID, NOT US. An app may ask
+  // for Bluetooth to be switched on, but since Android 13 it may not switch it
+  // off -- the call returns having done nothing. So the off half of this toggle
+  // tries, checks whether the radio actually went down, and when it did not,
+  // offers the one place that can do it. A toggle that silently fails would be
+  // worse than no toggle.
+  const handleBluetoothPress = async () => {
+    if (!bleOn) {
+      await enableBle();
+      return;
+    }
+
+    const wentOff = await disableBle();
+    if (wentOff) return;
+
+    const open = await dialog.confirm(
+      'Android will not let the app do that',
+      'Bluetooth can be switched on from here, but only you can switch it off. ' +
+        'Open Bluetooth settings?',
+      { confirmLabel: 'Open settings', cancelLabel: 'Leave it on' }
+    );
+    if (!open) return;
+
+    try {
+      if (Platform.OS === 'android') {
+        await Linking.sendIntent('android.settings.BLUETOOTH_SETTINGS');
+      } else {
+        await Linking.openURL('App-Prefs:Bluetooth');
+      }
+    } catch {
+      await dialog.notify(
+        'Could not open settings',
+        'Switch Bluetooth off from the phone\'s quick settings instead.',
+        { variant: 'warn' }
+      );
     }
   };
 
@@ -212,7 +241,11 @@ export default function Header() {
 
         {/* RIGHT SIDE: The Bluetooth Connect/Disconnect Button */}
         <View style={localStyles.iconButtons}>
-          <TouchableOpacity onPress={handleBluetoothPress} activeOpacity={0.7}>
+          <TouchableOpacity
+            onPress={() => { void handleBluetoothPress(); }}
+            activeOpacity={0.7}
+            accessibilityLabel={bleOn ? 'Switch Bluetooth off' : 'Switch Bluetooth on'}
+          >
             <Animated.View
               style={[
                 localStyles.roundButton,

@@ -18,6 +18,9 @@ export interface Palette {
   fault: string;
   faultBg: string;
   accent: string;
+  /** Favourited flights. Not a status -- a mark the operator put there. */
+  gold: string;
+  goldBg: string;
 
   // --- depth and sheen ---
   // A flat fill reads as a 2005 control panel however good the colours are.
@@ -55,6 +58,9 @@ export const nightPalette: Palette = {
   faultBg: '#2B171B',
   accent: '#1A5F94',
 
+  gold: '#FFD60A',
+  goldBg: '#332A0D',
+
   gradSurface: ['#1B242D', '#131A20'],
   gradAccent: ['#4A9FDC', '#2A6E9E'],
   gradBackdrop: ['#0E1318', '#080A0D'],
@@ -82,6 +88,10 @@ export const dayPalette: Palette = {
   fault: '#B3161B',
   faultBg: '#F7DEDF',
   accent: '#1A5F94',
+
+  // Darker than the night gold: a bright yellow on white is unreadable.
+  gold: '#8A6B00',
+  goldBg: '#FAF0CC',
 
   gradSurface: ['#FFFFFF', '#EFF3F5'],
   gradAccent: ['#2E86C4', '#17537F'],

@@ -265,6 +265,14 @@ interface DroneContextType {
    * say so rather than appear broken.
    */
   enableBle: () => Promise<void>;
+  /**
+   * Asks Android to switch the radio OFF. Returns whether it actually went off.
+   *
+   * It usually will not -- see the implementation. The caller is expected to
+   * send the operator to the system Bluetooth settings when this returns false,
+   * rather than leaving a toggle that silently does nothing.
+   */
+  disableBle: () => Promise<boolean>;
   bleStatus: BleStatus;
   bleError: string | null;
   scanForDrone: () => Promise<void>;
@@ -327,6 +335,39 @@ export function DroneConnectionProvider({ children }: { children: React.ReactNod
       await manager.enable();
     } catch (error) {
       recordDroneError(error, 'bluetooth');
+    }
+  };
+
+  /**
+   * ANDROID WILL PROBABLY REFUSE THIS, AND THAT IS NOT A BUG.
+   *
+   * BluetoothAdapter.disable() has been a no-op for apps targeting Android 13
+   * or later -- it returns without doing anything and without throwing. Google
+   * took it away deliberately: an app may ask for the radio to be switched on,
+   * because that is something the user can see and approve, but only the person
+   * holding the phone may switch it off.
+   *
+   * This app targets well past 13, so expect false on any modern handset. The
+   * call is still made because older devices honour it, and because asking and
+   * checking is more honest than assuming.
+   *
+   * It reports what actually happened rather than whether the call threw, so a
+   * caller can send the operator somewhere useful instead of showing a toggle
+   * that does nothing.
+   */
+  const disableBle = async (): Promise<boolean> => {
+    const manager = getBleManager();
+    if (!manager) return false;
+    try {
+      await manager.disable();
+      // The state subscription is asynchronous, so read the adapter directly
+      // rather than trusting `bleOn` to have caught up within this tick.
+      const state = await manager.state();
+      return state !== State.PoweredOn;
+    } catch {
+      // A refusal is an expected outcome here, not a fault worth logging to
+      // the operator's fault log.
+      return false;
     }
   };
   const [params, setParams] = useState<Map<string, ParamEntry>>(new Map());
@@ -1819,6 +1860,7 @@ withTocRetry(() => fetchParamToc().then(() => fetchLogToc()))
         bleAvailable: getBleManager() !== null,
         bleOn,
         enableBle,
+        disableBle,
         bleStatus,
         bleError,
         scanForDrone,
