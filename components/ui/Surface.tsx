@@ -41,7 +41,11 @@ export default function Surface({
   // gradient children cannot be seen through their own parent's fill.
   const base: ViewStyle = {
     borderRadius,
-    overflow: 'hidden',
+    // CLIPPED ONLY WHEN THERE IS SOMETHING TO CLIP. `glass` has a sheen that
+    // must be cut to the corners; a panel has nothing inside it reaching the
+    // edge. Clipping to a rounded rectangle costs Android a saved layer per
+    // view, which in a scrolling list of cards is felt rather than seen.
+    overflow: tone === 'glass' ? 'hidden' : undefined,
     borderWidth: 1,
     borderColor: tone === 'glass' ? palette.glassEdge : palette.border,
     backgroundColor:

@@ -107,13 +107,35 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
         /* Playback. Sits along the bottom clear of the legend. */
         #controls { bottom: 8px; left: 8px; right: 8px; display: flex;
                     align-items: center; gap: 8px; }
-        #play { background: #1A222A; color: #E8EDF2; border: 1px solid #3A8FCC;
-                border-radius: 3px; font-family: monospace; font-size: 12px;
-                padding: 4px 9px; flex: none; }
-        #scrub { flex: 1; min-width: 40px; accent-color: #3A8FCC; }
-        #spd { background: #1A222A; color: #E8EDF2; border: 1px solid #2A343E;
-               border-radius: 3px; font-family: monospace; font-size: 11px;
-               padding: 4px 6px; flex: none; }
+        #play { background: rgba(58,143,204,0.16); color: #7FC2EF;
+                border: 1px solid rgba(58,143,204,0.55);
+                border-radius: 999px; font-size: 13px; line-height: 1;
+                padding: 7px 13px; flex: none; }
+        #play:active { background: rgba(58,143,204,0.3); }
+
+        /* THE SCRUBBER AND THE SPEED PICKER ARE DRAWN BY HAND.
+           A bare <input type=range> and <select> get the platform's own
+           controls, and on Android the <select> opens a full-screen grey
+           dialog with radio buttons -- the operating system's dialog, in the
+           middle of our 3D view. Neither can be styled into the app, so both
+           are replaced: the slider with a custom track and thumb, the picker
+           with three buttons that change nothing but a class. */
+        #scrub { flex: 1; min-width: 40px; height: 22px; background: none;
+                 -webkit-appearance: none; appearance: none; }
+        #scrub::-webkit-slider-runnable-track {
+          height: 4px; border-radius: 999px; background: #2A343E; }
+        #scrub::-webkit-slider-thumb {
+          -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+          border-radius: 999px; background: #3A8FCC; border: 2px solid #0B0E11;
+          margin-top: -6px; }
+
+        #spd { display: flex; gap: 2px; flex: none; padding: 2px;
+               border-radius: 999px; background: rgba(11,14,17,0.6);
+               border: 1px solid #2A343E; }
+        #spd button { background: none; border: 0; color: #7D8C9A;
+                      font-family: monospace; font-size: 11px; font-weight: bold;
+                      padding: 5px 9px; border-radius: 999px; line-height: 1; }
+        #spd button.on { background: rgba(58,143,204,0.22); color: #7FC2EF; }
 
         #legend { bottom: 44px; left: 8px; }
         #legend .g { display: grid; grid-template-columns: auto auto; gap: 1px 10px; }
@@ -154,11 +176,11 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
       <div id="controls" class="panel">
         <button id="play">&#9654;</button>
         <input id="scrub" type="range" min="0" max="0" value="0" step="1" />
-        <select id="spd">
-          <option value="1">1x</option>
-          <option value="2">2x</option>
-          <option value="4">4x</option>
-        </select>
+        <div id="spd">
+          <button data-v="1" class="on">1x</button>
+          <button data-v="2">2x</button>
+          <button data-v="4">4x</button>
+        </div>
       </div>
 
       <script>
@@ -521,8 +543,16 @@ export default function SimulatorWebView({ flightData, livePoint }: SimulatorWeb
             lastTick = performance.now();
           });
 
-          document.getElementById('spd').addEventListener('change', function (e) {
-            speed = parseFloat(e.target.value) || 1;
+          // One listener on the group rather than three on the buttons: the
+          // markup can grow another speed without touching this.
+          var spdGroup = document.getElementById('spd');
+          spdGroup.addEventListener('click', function (e) {
+            var btn = e.target.closest('button[data-v]');
+            if (!btn) return;
+            speed = parseFloat(btn.getAttribute('data-v')) || 1;
+            var all = spdGroup.querySelectorAll('button');
+            for (var i = 0; i < all.length; i++) all[i].classList.remove('on');
+            btn.classList.add('on');
           });
 
           function animate(now) {

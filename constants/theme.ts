@@ -53,7 +53,7 @@ export const nightPalette: Palette = {
   warnBg: '#2B2010',
   fault: '#E5484D',
   faultBg: '#2B171B',
-  accent: '#3A8FCC',
+  accent: '#1A5F94',
 
   gradSurface: ['#1B242D', '#131A20'],
   gradAccent: ['#4A9FDC', '#2A6E9E'],
@@ -102,14 +102,20 @@ export const radius = { none: 0, xs: 8, sm: 14, md: 22, lg: 28, pill: 999 };
 // Cast shadows, in the four strengths used. Android needs `elevation` and
 // ignores the rest; iOS is the opposite, so both are always set. A shadow only
 // renders over an opaque backgroundColor, which every raised surface has.
+//
+// THE ELEVATIONS ARE LOW ON PURPOSE. Android draws an elevated view into its
+// own layer, and a scrolling list of them stutters. They started at 3/8/18 and
+// the scroll was reported as glitchy; against a near-black background almost
+// none of that depth was visible anyway -- the top highlight on each card is
+// doing the work a cast shadow does on a light theme.
 export type ShadowLevel = 'none' | 'sm' | 'md' | 'lg';
 
 export function shadow(level: ShadowLevel, palette: Palette) {
   if (level === 'none') return {};
   const spec = {
-    sm: { h: 2, o: 0.18, r: 6, e: 3 },
-    md: { h: 6, o: 0.26, r: 14, e: 8 },
-    lg: { h: 14, o: 0.38, r: 28, e: 18 },
+    sm: { h: 1, o: 0.16, r: 4, e: 1 },
+    md: { h: 4, o: 0.22, r: 10, e: 3 },
+    lg: { h: 10, o: 0.34, r: 20, e: 8 },
   }[level];
   return {
     shadowColor: palette.shadowColor,

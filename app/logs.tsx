@@ -111,7 +111,9 @@ export default function LogsScreen() {
               // Keyed on the entry id, so a fault that arrives while the screen
               // is open slides in rather than appearing fully drawn.
               <Reveal key={entry.id} index={Math.min(i, 6)} style={local.cardWrap}>
-              <Surface level="sm" padded={false} style={[local.card, { borderLeftColor: colour }]}>
+              {/* No shadow: the log is a scrolling list and these are rows in
+                  it. The level colour on the left edge separates them. */}
+              <Surface level="none" padded={false} style={[local.card, { borderLeftColor: colour }]}>
                 <View style={local.cardHead}>
                   <Ionicons name={LEVEL_ICON[entry.level]} size={16} color={colour} />
                   <Text style={[local.cardTitle, { color: palette.textPrimary }]}>{entry.title}</Text>

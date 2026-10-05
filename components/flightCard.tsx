@@ -32,7 +32,7 @@
 // ===========================================================================
 
 import { Tappable } from '@/components/ui/Button';
-import { alpha, Palette, radius, shadow, spacing, type } from '@/constants/theme';
+import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { flightKind, type FlightKind } from '@/services/FlightStore';
 import { Flight } from '@/types/flightT';
@@ -148,8 +148,9 @@ function createStyles(palette: Palette) {
       borderWidth: 1,
       borderColor: palette.border,
       padding: spacing.lg,
-      overflow: 'hidden',
-      ...shadow('sm', palette),
+      // No shadow and no clipping: these live in a scrolling list, and nothing
+      // inside the card reaches its corners now that the gradient wash is gone.
+      // The coloured left edge is what distinguishes one card from the next.
     },
     header: {
       flexDirection: 'row',
