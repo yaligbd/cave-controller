@@ -64,7 +64,6 @@ export default function SimulatorScreen() {
   // from "the download is broken".
   const [flights, setFlights] = useState<StoredFlight[]>([]);
   const [selectedFlight, setSelectedFlight] = useState<StoredFlight | null>(null);
-  const [isLiveMode, setIsLiveMode] = useState(false);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [draftName, setDraftName] = useState('');
   // Which flight's raw measurements to show. Tapping a card opens this, so the
@@ -159,20 +158,6 @@ export default function SimulatorScreen() {
 
   const localStyles = useMemo(() => createLocalStyles(palette), [palette]);
 
-  const livePoint = isLiveMode && isConnected ? {
-    x: (logValues.get('tele.x') || 0) / 1000.0,
-    y: (logValues.get('tele.y') || 0) / 1000.0,
-    z: (logValues.get('tele.z') || 0) / 1000.0,
-    yaw: 0,
-    sensors: {
-      front: (logValues.get('tele.front') || 0) / 1000.0,
-      back: (logValues.get('tele.back') || 0) / 1000.0,
-      left: (logValues.get('tele.left') || 0) / 1000.0,
-      right: (logValues.get('tele.right') || 0) / 1000.0,
-      up: (logValues.get('tele.up') || 0) / 1000.0,
-      down: (logValues.get('tele.down') || 0) / 1000.0,
-    }
-  } : undefined;
 
   return (
     <Screen>
@@ -181,9 +166,7 @@ export default function SimulatorScreen() {
       <ScrollView style={styles.bodyContainer} contentContainerStyle={{ paddingBottom: spacing.xxl }}>
         {/* 1. 3D Viewer at the top */}
         <View style={localStyles.simulatorContainer}>
-          {isLiveMode ? (
-            <SimulatorWebView livePoint={livePoint} />
-          ) : loading ? (
+          {loading ? (
             <View style={localStyles.emptyViewer}>
               <ActivityIndicator size="large" color={palette.accent} />
               <Text style={[localStyles.emptyText, { marginTop: spacing.lg }]}>
@@ -211,67 +194,35 @@ export default function SimulatorScreen() {
                 off the row. Android does not hit-test a view drawn outside its
                 parent, so the button was both half off-screen AND dead. */}
             <Text style={[localStyles.detailTitle, { flex: 1, marginRight: 8 }]} numberOfLines={1}>
-              {isLiveMode
-                ? 'Live Flight Mode'
-                : loading
-                  ? 'Loading…'
-                  : (selectedFlight?.name ?? 'No flight selected')}
+              {loading ? 'Loading…' : (selectedFlight?.name ?? 'No flight selected')}
             </Text>
           </View>
 
-          {!isLiveMode ? (
-            selectedFlight ? (
+          {selectedFlight ? (
               <View style={localStyles.statGrid}>
                 <Stat palette={palette} label="Duration" value={`${selectedFlight.duration} s`} />
                 <Stat palette={palette} label="Max alt" value={`${selectedFlight.maxAltitude} m`} />
                 <Stat palette={palette} label="Distance" value={`${selectedFlight.distance} m`} />
                 <Stat palette={palette} label="Samples" value={String(selectedFlight.flightPath.time.length)} />
               </View>
-            ) : loading ? null : (
-              <Text style={localStyles.detailRow}>Nothing downloaded yet.</Text>
-            )
-          ) : (
-            <View style={localStyles.statGrid}>
-              <Stat palette={palette} label="Connected" value={isConnected ? 'Yes' : 'No'} />
-              <Stat
-                palette={palette}
-                label="Altitude"
-                value={`${((logValues.get('tele.z') || 0) / 1000.0).toFixed(2)} m`}
-              />
-              <Stat
-                palette={palette}
-                label="Battery"
-                value={`${((logValues.get('tele.vbat') || 0) / 1000.0).toFixed(2)} V`}
-              />
-            </View>
+          ) : loading ? null : (
+            <Text style={localStyles.detailRow}>Nothing downloaded yet.</Text>
           )}
         </Surface>
         </Reveal>
 
         {/* A chevron, because the flights below are deliberately off-screen.
             Without it the screen looks like it ends at the card. */}
-        {!isLiveMode && visibleFlights.length > 0 && (
+        {visibleFlights.length > 0 && (
           <Text style={localStyles.moreHint}>
             ⌄  {visibleFlights.length} saved flight{visibleFlights.length === 1 ? '' : 's'} below
           </Text>
         )}
 
-        {/* The two things you can ASK the drone for, together. START LIVE used
-            to sit in the middle of the flight summary, where it read as part of
-            the flight rather than as a command. */}
-        <View style={localStyles.actionRow}>
-          <Button
-            label={isLiveMode ? 'Stop live' : 'Start live'}
-            tint={isLiveMode ? palette.warn : palette.accent}
-            variant="outline"
-            round="pill"
-            onPress={() => setIsLiveMode(!isLiveMode)}
-          />
-        </View>
 
         {/* Pull the flight the DRONE recorded, as opposed to the copy the phone
             made while watching. This is the real store-and-forward path. */}
-        {!isLiveMode && isConnected && (
+        {isConnected && (
           <Button
             label={
               downloading
@@ -289,7 +240,7 @@ export default function SimulatorScreen() {
 
         {/* Saved flights. Real ones only -- see the note on the flights state. */}
         {/* The controls only appear once there is a list worth ordering. */}
-        {!isLiveMode && !loading && flights.length > 1 && (
+        {!loading && flights.length > 1 && (
           <FlightSort
             order={order}
             onChange={setOrder}
@@ -298,13 +249,13 @@ export default function SimulatorScreen() {
           />
         )}
 
-        {!isLiveMode && !loading && flights.length > 0 && visibleFlights.length === 0 && (
+        {!loading && flights.length > 0 && visibleFlights.length === 0 && (
           <Surface tone="glass" style={localStyles.banner}>
             <Text style={localStyles.bannerText}>No flights match that filter.</Text>
           </Surface>
         )}
 
-        {!isLiveMode && !loading && flights.length === 0 && (
+        {!loading && flights.length === 0 && (
           <Surface tone="glass" style={localStyles.banner}>
             <Text style={localStyles.bannerText}>
               No saved flights. Fly a mission and download it from the drone.
@@ -316,7 +267,7 @@ export default function SimulatorScreen() {
             view with its own shared value, and a list of them made the screen
             slow to settle and the scroll stutter. The panels above still
             animate; rows in a list do not need to. */}
-        {!isLiveMode && visibleFlights.map((flight) => (
+        {visibleFlights.map((flight) => (
           <View key={flight.id} style={localStyles.flightRow}>
             {renamingId === flight.id ? (
               <View style={localStyles.renameBox}>
@@ -422,11 +373,6 @@ function createLocalStyles(palette: Palette) {
       textAlign: 'center',
       marginBottom: spacing.sm,
       letterSpacing: 1,
-    },
-    actionRow: {
-      flexDirection: 'row',
-      justifyContent: 'flex-end',
-      marginBottom: spacing.md,
     },
     detailWrap: {
       marginBottom: spacing.lg,

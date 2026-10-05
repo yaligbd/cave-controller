@@ -8,18 +8,20 @@ import { Linking, Platform, Pressable, Text, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 
 /**
- * Two hairlines across the top of every screen: the radio, and the battery.
+ * One thin row across the top of every screen: the radio on the left, the
+ * battery on the right, half each.
  *
  * WHY IT IS NOT AN ICON ANY MORE. The Bluetooth icon sat in the header row and
- * cost about forty points of width that the navigation needed -- five tabs did
- * not fit, so they scrolled, and the two at the end were invisible. These are
- * four pixels tall across the full width, which is less space than the icon
- * took and says more: the icon could only report the radio, and the battery had
- * to be hunted for on the Connect screen.
+ * cost about forty points of width that the five navigation tabs needed. It
+ * could also only report the radio, while the battery -- the number that
+ * decides whether there is time for another flight -- had to be hunted for on
+ * the Connect screen.
  *
- * Both answer at a glance and neither needs reading. The battery is the one
- * that decides whether there is time for another flight, and it was the number
- * being checked most often.
+ * AND WHY THE RADIO IS A WORD, NOT A BAR. It was a bare coloured bar first, and
+ * a bar on its own says nothing: there is no way to tell what it is measuring
+ * or which end is good. The word says it, and the colour answers it -- blue for
+ * off, green for on. The battery can stay a bar because a bar is exactly what a
+ * battery is.
  */
 export default function StatusStrip() {
   const { palette } = useTheme();
@@ -29,14 +31,14 @@ export default function StatusStrip() {
   const volts = packVolts(logValues);
   const percent = volts !== undefined ? lipoPercent(volts) : null;
 
-  const bleTint = isConnected ? palette.ready : bleOn ? palette.accent : palette.textMuted;
+  const bleTint = bleOn ? palette.ready : palette.accent;
   const batteryTint =
     percent === null ? palette.textMuted
     : percent > 50 ? palette.ready
     : percent >= 20 ? palette.warn
     : palette.fault;
 
-  // The radio bar breathes only while a drone is actually attached. A bar that
+  // The word breathes only while a drone is actually attached. Something that
   // animated whenever Bluetooth was on would be moving almost all the time,
   // which is the same as not moving at all.
   const breath = useSharedValue(0);
@@ -45,7 +47,7 @@ export default function StatusStrip() {
       ? withRepeat(withTiming(1, { duration: 1400, easing: Easing.inOut(Easing.quad) }), -1, true)
       : withTiming(0, { duration: 200 });
   }, [isConnected, breath]);
-  const pulse = useAnimatedStyle(() => ({ opacity: 0.55 + breath.value * 0.45 }));
+  const pulse = useAnimatedStyle(() => ({ opacity: 0.6 + breath.value * 0.4 }));
 
   // Nothing read yet means an empty track, not a full one. A strip that showed
   // a full battery before the drone had said anything would be a lie at the
@@ -81,64 +83,82 @@ export default function StatusStrip() {
   };
 
   return (
-    <Pressable
-      onPress={() => { void onPress(); }}
-      // The strip is four pixels tall. Without this it is decoration rather
-      // than a control.
-      hitSlop={{ top: 14, bottom: 14, left: 0, right: 0 }}
-      accessibilityLabel={bleOn ? 'Switch Bluetooth off' : 'Switch Bluetooth on'}
+    <View
       style={{
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.xs,
         paddingHorizontal: spacing.lg,
+        paddingBottom: spacing.xs,
       }}
     >
-      {/* RADIO. One third of the width, because it has one bit to say. */}
-      <Animated.View
-        style={[
-          pulse,
-          {
+      {/* RADIO -- half the width, and the whole half is the tap target. */}
+      <Pressable
+        onPress={() => { void onPress(); }}
+        hitSlop={{ top: 10, bottom: 10 }}
+        accessibilityLabel={bleOn ? 'Switch Bluetooth off' : 'Switch Bluetooth on'}
+        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}
+      >
+        <Animated.View
+          style={[
+            pulse,
+            {
+              width: 6,
+              height: 6,
+              borderRadius: radius.pill,
+              backgroundColor: bleTint,
+            },
+          ]}
+        />
+        <Animated.Text
+          style={[
+            pulse,
+            {
+              fontFamily: type.sansMedium,
+              fontSize: type.micro,
+              letterSpacing: 1.2,
+              textTransform: 'uppercase',
+              color: bleTint,
+            },
+          ]}
+          allowFontScaling={false}
+        >
+          Bluetooth
+        </Animated.Text>
+      </Pressable>
+
+      {/* BATTERY -- the other half: a track with a proportional fill. */}
+      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+        <View
+          style={{
             flex: 1,
             height: 4,
             borderRadius: radius.pill,
-            backgroundColor: bleOn ? bleTint : alpha(palette.textMuted, 0.35),
-          },
-        ]}
-      />
-
-      {/* BATTERY. Two thirds, as a track with a proportional fill. */}
-      <View
-        style={{
-          flex: 2,
-          height: 4,
-          borderRadius: radius.pill,
-          backgroundColor: alpha(palette.textMuted, 0.25),
-          overflow: 'hidden',
-        }}
-      >
-        <View
-          style={{
-            width: `${fill}%`,
-            height: '100%',
-            borderRadius: radius.pill,
-            backgroundColor: batteryTint,
+            backgroundColor: alpha(palette.textMuted, 0.25),
+            overflow: 'hidden',
           }}
-        />
+        >
+          <View
+            style={{
+              width: `${fill}%`,
+              height: '100%',
+              borderRadius: radius.pill,
+              backgroundColor: batteryTint,
+            }}
+          />
+        </View>
+        <Text
+          style={{
+            fontFamily: type.mono,
+            fontSize: type.micro,
+            color: percent === null ? palette.textMuted : batteryTint,
+            width: 30,
+            textAlign: 'right',
+          }}
+          allowFontScaling={false}
+        >
+          {percent === null ? '--' : `${Math.round(percent)}%`}
+        </Text>
       </View>
-
-      {/* The only text, and only once there is something true to say. */}
-      <Text
-        style={{
-          fontFamily: type.mono,
-          fontSize: 9,
-          color: palette.textMuted,
-          width: 30,
-          textAlign: 'right',
-        }}
-      >
-        {percent === null ? '--' : `${Math.round(percent)}%`}
-      </Text>
-    </Pressable>
+    </View>
   );
 }

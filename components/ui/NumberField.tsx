@@ -46,43 +46,36 @@ export default function NumberField({
   const [open, setOpen] = useState(false);
 
   return (
-    <View style={{ marginBottom: spacing.lg }}>
-      <Text
-        style={{
-          fontFamily: type.sansMedium,
-          fontSize: type.xs,
-          letterSpacing: 1.2,
-          textTransform: 'uppercase',
-          color: palette.textMuted,
-          marginBottom: spacing.sm,
-        }}
-      >
-        {label}
-      </Text>
-
+    <View>
+      {/* ONE ROW, NOT A LABELLED BOX. The label used to sit above a field with
+          a 34pt readout in it, which is about 110 points per setting -- three
+          of them pushed Take Off and Abort off the bottom of the mission
+          screen, so the one screen you use standing in an arena needed a
+          scroll to reach its two most important buttons. Name on the left,
+          value on the right, in half the height. */}
       <Pressable
         onPress={() => setOpen(true)}
         style={{
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'space-between',
-          backgroundColor: palette.surfaceRaised,
-          borderWidth: 1,
-          borderColor: palette.border,
-          borderRadius: radius.sm,
           paddingVertical: spacing.md,
-          paddingHorizontal: spacing.lg,
+          borderBottomWidth: 1,
+          borderBottomColor: alpha(palette.border, 0.7),
         }}
       >
+        <Text style={{ fontFamily: type.sans, fontSize: type.md, color: palette.textPrimary }}>
+          {label}
+        </Text>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm }}>
-          <Text style={{ fontFamily: type.mono, fontSize: type.readout, color: palette.textPrimary }}>
+          <Text style={{ fontFamily: type.mono, fontSize: type.lg, color: palette.textPrimary }}>
             {value}
           </Text>
           <Text style={{ fontFamily: type.sans, fontSize: type.sm, color: palette.textSecondary }}>
             {unit}
           </Text>
+          <Ionicons name="keypad-outline" size={18} color={palette.textMuted} />
         </View>
-        <Ionicons name="keypad-outline" size={20} color={palette.textMuted} />
       </Pressable>
 
       <Keypad

@@ -1,17 +1,19 @@
-import { alpha, radius, spacing, type } from '@/constants/theme';
+import { alpha, radius, shadow, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { flightKind, type StoredFlight } from '@/services/FlightStore';
 import { Ionicons } from '@expo/vector-icons';
-import React from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 /**
  * How the flight list is ordered and what it leaves out.
  *
- * SORT AND FILTER ARE SEPARATE, DELIBERATELY. "Show me the crashes" and "order
- * by how far it flew" are different questions, and folding them into one list
- * of options means you can only ask one at a time. Kept apart, "the furthest
- * crash" is two taps.
+ * BOTH LIVE BEHIND ONE BUTTON. They were two rows of chips above the list,
+ * which answered the question before it was asked and cost a third of the
+ * screen on the one page whose point is the view above it. A sheet costs one
+ * tap and no space at all, and the button itself says the current order, so
+ * nothing is hidden -- only folded away.
  */
 export type SortKey = 'date' | 'duration' | 'distance' | 'altitude' | 'samples';
 export type FilterKey = 'all' | 'favourite' | 'drone' | 'phone' | 'crashed';
@@ -25,20 +27,20 @@ export interface FlightOrder {
 
 export const DEFAULT_ORDER: FlightOrder = { sort: 'date', descending: true, filter: 'all' };
 
-const SORTS: { key: SortKey; label: string }[] = [
-  { key: 'date', label: 'Date' },
-  { key: 'duration', label: 'Length' },
-  { key: 'distance', label: 'Distance' },
-  { key: 'altitude', label: 'Altitude' },
-  { key: 'samples', label: 'Readings' },
+const SORTS: { key: SortKey; label: string; hint: string }[] = [
+  { key: 'date', label: 'Date', hint: 'When it was saved' },
+  { key: 'duration', label: 'Length', hint: 'How long it flew' },
+  { key: 'distance', label: 'Distance', hint: 'How far it travelled' },
+  { key: 'altitude', label: 'Altitude', hint: 'How high it got' },
+  { key: 'samples', label: 'Readings', hint: 'How many samples it holds' },
 ];
 
 const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'favourite', label: '★ Favourites' },
-  { key: 'drone', label: 'Drone' },
-  { key: 'phone', label: 'Phone' },
-  { key: 'crashed', label: 'Crashed' },
+  { key: 'all', label: 'Everything' },
+  { key: 'favourite', label: 'Favourites' },
+  { key: 'drone', label: 'Drone recordings' },
+  { key: 'phone', label: 'Phone recordings' },
+  { key: 'crashed', label: 'Crashes' },
 ];
 
 function valueOf(f: StoredFlight, key: SortKey): number {
@@ -87,91 +89,226 @@ export default function FlightSort({
   shown: number;
 }) {
   const { palette } = useTheme();
+  const [open, setOpen] = useState(false);
 
-  const chip = (active: boolean) => ({
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: active ? alpha(palette.accent, 0.55) : palette.border,
-    backgroundColor: active ? alpha(palette.accent, 0.18) : alpha(palette.textSecondary, 0.06),
-  });
+  const sortLabel = SORTS.find((o) => o.key === order.sort)?.label ?? 'Date';
+  const filtering = order.filter !== 'all';
+  const filterLabel = FILTERS.find((f) => f.key === order.filter)?.label;
 
-  const chipText = (active: boolean) => ({
-    fontFamily: type.sansMedium,
-    fontSize: type.xs,
-    fontWeight: '700' as const,
-    color: active ? palette.accent : palette.textSecondary,
-  });
+  return (
+    <View style={{ marginBottom: spacing.lg, flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+      <Pressable
+        onPress={() => setOpen(true)}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: spacing.sm,
+          paddingHorizontal: spacing.lg,
+          paddingVertical: spacing.sm + 2,
+          borderRadius: radius.pill,
+          borderWidth: 1,
+          borderColor: filtering ? alpha(palette.accent, 0.55) : palette.border,
+          backgroundColor: filtering ? alpha(palette.accent, 0.16) : alpha(palette.textSecondary, 0.07),
+        }}
+      >
+        <Ionicons name="funnel-outline" size={14} color={filtering ? palette.accent : palette.textSecondary} />
+        <Text
+          style={{
+            fontFamily: type.sansMedium,
+            fontSize: type.xs,
+            fontWeight: '700',
+            color: filtering ? palette.accent : palette.textSecondary,
+          }}
+        >
+          {sortLabel}
+          {filtering ? ` · ${filterLabel}` : ''}
+        </Text>
+        <Ionicons
+          name={order.descending ? 'arrow-down' : 'arrow-up'}
+          size={13}
+          color={filtering ? palette.accent : palette.textMuted}
+        />
+      </Pressable>
 
-  const rowLabel = {
+      {/* Only worth saying when the filter is actually hiding something. */}
+      {shown !== total && (
+        <Text style={{ fontFamily: type.sans, fontSize: type.xs, color: palette.textMuted }}>
+          {shown} of {total}
+        </Text>
+      )}
+
+      <OrderSheet visible={open} order={order} onChange={onChange} onClose={() => setOpen(false)} />
+    </View>
+  );
+}
+
+function OrderSheet({
+  visible,
+  order,
+  onChange,
+  onClose,
+}: {
+  visible: boolean;
+  order: FlightOrder;
+  onChange: (next: FlightOrder) => void;
+  onClose: () => void;
+}) {
+  const { palette } = useTheme();
+  const slide = useSharedValue(0);
+
+  useEffect(() => {
+    slide.value = visible ? withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) }) : 0;
+  }, [visible, slide]);
+
+  const sheet = useAnimatedStyle(() => ({ transform: [{ translateY: (1 - slide.value) * 480 }] }));
+  const fade = useAnimatedStyle(() => ({ opacity: slide.value }));
+
+  const heading = {
     fontFamily: type.sansMedium,
     fontSize: type.micro,
     letterSpacing: 1.5,
     textTransform: 'uppercase' as const,
     color: palette.textMuted,
     marginBottom: spacing.sm,
+    marginTop: spacing.lg,
   };
 
+  const row = (active: boolean) => ({
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.sm,
+    backgroundColor: active ? alpha(palette.accent, 0.14) : 'transparent',
+  });
+
   return (
-    <View style={{ marginBottom: spacing.lg }}>
-      <Text style={rowLabel}>Show</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
-        {FILTERS.map((f) => {
-          const active = order.filter === f.key;
-          return (
-            <Pressable key={f.key} onPress={() => onChange({ ...order, filter: f.key })} style={chip(active)}>
-              <Text style={chipText(active)}>{f.label}</Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <Animated.View style={[StyleSheet.absoluteFill, fade]}>
+        <Pressable
+          style={[StyleSheet.absoluteFill, { backgroundColor: alpha(palette.bg, 0.72) }]}
+          onPress={onClose}
+        />
+      </Animated.View>
 
-      <Text style={[rowLabel, { marginTop: spacing.md }]}>Sort by</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
-        {SORTS.map((o) => {
-          const active = order.sort === o.key;
-          return (
-            <Pressable
-              key={o.key}
-              // Tapping the sort already in use flips its direction, which is
-              // where everyone reaches for it anyway.
-              onPress={() =>
-                onChange(
-                  active
-                    ? { ...order, descending: !order.descending }
-                    : { ...order, sort: o.key, descending: true }
-                )
-              }
-              style={[chip(active), { flexDirection: 'row', alignItems: 'center', gap: 4 }]}
-            >
-              <Text style={chipText(active)}>{o.label}</Text>
-              {active && (
-                <Ionicons
-                  name={order.descending ? 'arrow-down' : 'arrow-up'}
-                  size={12}
-                  color={palette.accent}
-                />
-              )}
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-
-      {/* Only worth saying when the filter is actually hiding something. A
-          count that always reads "6 of 6" is noise. */}
-      {shown !== total && (
-        <Text
-          style={{
-            fontFamily: type.sans,
-            fontSize: type.xs,
-            color: palette.textMuted,
-            marginTop: spacing.md,
-          }}
+      <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
+        <Animated.View
+          style={[
+            sheet,
+            {
+              backgroundColor: palette.surface,
+              borderTopLeftRadius: radius.lg,
+              borderTopRightRadius: radius.lg,
+              borderTopWidth: 1,
+              borderColor: palette.glassEdge,
+              paddingHorizontal: spacing.lg,
+              paddingTop: spacing.lg,
+              paddingBottom: spacing.xxl,
+              ...shadow('lg', palette),
+            },
+          ]}
         >
-          {shown} of {total} flights
-        </Text>
-      )}
-    </View>
+          <View
+            style={{
+              alignSelf: 'center',
+              width: 44,
+              height: 4,
+              borderRadius: radius.pill,
+              backgroundColor: palette.borderStrong,
+            }}
+          />
+
+          <Text style={heading}>Sort by</Text>
+          {SORTS.map((o) => {
+            const active = order.sort === o.key;
+            return (
+              <Pressable
+                key={o.key}
+                // Tapping the sort already in use flips its direction, which is
+                // where everyone reaches for it anyway.
+                onPress={() =>
+                  onChange(
+                    active
+                      ? { ...order, descending: !order.descending }
+                      : { ...order, sort: o.key, descending: true }
+                  )
+                }
+                style={row(active)}
+              >
+                <View>
+                  <Text
+                    style={{
+                      fontFamily: type.sansMedium,
+                      fontSize: type.md,
+                      color: active ? palette.accent : palette.textPrimary,
+                    }}
+                  >
+                    {o.label}
+                  </Text>
+                  <Text style={{ fontFamily: type.sans, fontSize: type.xs, color: palette.textMuted }}>
+                    {o.hint}
+                  </Text>
+                </View>
+                {active && (
+                  <Ionicons
+                    name={order.descending ? 'arrow-down' : 'arrow-up'}
+                    size={18}
+                    color={palette.accent}
+                  />
+                )}
+              </Pressable>
+            );
+          })}
+
+          <Text style={heading}>Show</Text>
+          {FILTERS.map((f) => {
+            const active = order.filter === f.key;
+            return (
+              <Pressable
+                key={f.key}
+                onPress={() => onChange({ ...order, filter: f.key })}
+                style={row(active)}
+              >
+                <Text
+                  style={{
+                    fontFamily: type.sansMedium,
+                    fontSize: type.md,
+                    color: active ? palette.accent : palette.textPrimary,
+                  }}
+                >
+                  {f.label}
+                </Text>
+                {active && <Ionicons name="checkmark" size={18} color={palette.accent} />}
+              </Pressable>
+            );
+          })}
+
+          <Pressable
+            onPress={onClose}
+            style={{
+              marginTop: spacing.xl,
+              alignItems: 'center',
+              paddingVertical: spacing.md + 2,
+              borderRadius: radius.sm,
+              backgroundColor: palette.accent,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: type.sansMedium,
+                fontSize: type.sm,
+                fontWeight: '700',
+                letterSpacing: 1.5,
+                textTransform: 'uppercase',
+                color: '#FFFFFF',
+              }}
+            >
+              Done
+            </Text>
+          </Pressable>
+        </Animated.View>
+      </View>
+    </Modal>
   );
 }

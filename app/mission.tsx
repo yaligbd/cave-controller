@@ -307,6 +307,7 @@ export default function MissionScreen() {
           <Surface
             tone="glass"
             level="md"
+            padded={false}
             style={[
               localStyles.statusBlock,
               { backgroundColor: STATUS_BG[status.level], borderLeftColor: STATUS_COLOR[status.level] },
@@ -420,13 +421,19 @@ export default function MissionScreen() {
 
 function createLocalStyles(palette: Palette) {
   return StyleSheet.create({
-    body: { padding: spacing.lg, paddingBottom: spacing.xxl },
+    // THIS SCREEN SHOULD NOT NEED SCROLLING. It is used standing up, holding a
+    // drone, and Take Off and Abort are at the bottom. The ScrollView stays as
+    // a safety net for a small phone or a large system font, but the spacing
+    // below is set so that on an ordinary handset it never has to move.
+    body: { padding: spacing.lg, paddingBottom: spacing.lg },
     /** Vertical rhythm between panels, now that each one is its own Reveal. */
-    block: { marginTop: spacing.lg },
+    block: { marginTop: spacing.md },
     // The status colour arrives as a left border and a tinted fill; Surface
     // supplies the radius, sheen and shadow.
     statusBlock: {
       borderLeftWidth: 4,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.lg,
     },
     statusRow: {
       flexDirection: 'row',
@@ -458,6 +465,7 @@ function createLocalStyles(palette: Palette) {
       letterSpacing: 1.2,
       textTransform: 'uppercase',
       color: palette.textMuted,
+      marginTop: spacing.lg,
       marginBottom: spacing.sm,
     },
     // One segmented control rather than three separate buttons: the three modes
@@ -489,15 +497,15 @@ function createLocalStyles(palette: Palette) {
       fontFamily: type.sans,
       color: palette.textMuted,
       fontSize: type.xs,
-      lineHeight: type.xs * 1.5,
-      marginTop: spacing.md,
+      lineHeight: type.xs * 1.4,
+      marginTop: spacing.sm,
     },
     abortButton: {
       borderWidth: 1,
       borderRadius: radius.sm,
-      paddingVertical: spacing.md + 2,
+      paddingVertical: spacing.md,
       alignItems: 'center',
-      marginTop: spacing.md,
+      marginTop: spacing.sm,
     },
     buttonText: {
       fontFamily: type.sansMedium,
