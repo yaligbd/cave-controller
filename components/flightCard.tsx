@@ -31,7 +31,6 @@
 // contexts/DroneConnectionContext.tsx and app/mission.tsx.
 // ===========================================================================
 
-import { Tappable } from '@/components/ui/Button';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { flightKind, type FlightKind } from '@/services/FlightStore';
@@ -84,7 +83,11 @@ export default function FlightCard({ flight, onPress, selected, onToggleFavourit
   const tone = flight.favourite ? FAVOURITE_TONE : KIND_TONE[kind];
 
   return (
-    <Tappable onPress={onPress}>
+    // A PLAIN Pressable, NOT THE ANIMATED ONE. Tappable gives a card a spring
+    // on press, which is lovely on a single button and costs a reanimated node
+    // with its own shared value per card. In a scrolling list of them that was
+    // felt. Opacity on press is enough feedback for a row.
+    <Pressable onPress={onPress} style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}>
       <View
         style={[
           s.card,
@@ -130,7 +133,7 @@ export default function FlightCard({ flight, onPress, selected, onToggleFavourit
 
       <Text style={s.hint}>Tap to view the flight data</Text>
       </View>
-    </Tappable>
+    </Pressable>
   );
 }
 

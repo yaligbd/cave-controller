@@ -35,6 +35,7 @@ import Header from '@/components/Header';
 import SimulatorWebView from '@/components/SimulatorWebView';
 import FlightCard from '@/components/flightCard';
 import FlightDataModal from '@/components/FlightDataModal';
+import FlightSort, { applyOrder, DEFAULT_ORDER, type FlightOrder } from '@/components/FlightSort';
 import Button from '@/components/ui/Button';
 import Reveal from '@/components/ui/Reveal';
 import Screen from '@/components/ui/Screen';
@@ -70,6 +71,9 @@ export default function SimulatorScreen() {
   // data is readable while the 3D view is still being built.
   const [dataFlight, setDataFlight] = useState<StoredFlight | null>(null);
   const [downloading, setDownloading] = useState(false);
+  // How the list below is ordered and what it leaves out. Held here rather
+  // than in the control so it survives a reload of the flights.
+  const [order, setOrder] = useState<FlightOrder>(DEFAULT_ORDER);
   // Flights are read from AsyncStorage, which takes long enough to see. Until
   // the first read lands we do not know whether there are any, and "No flights
   // yet" is a claim we cannot make -- it flashed up on every visit to this
@@ -150,6 +154,8 @@ export default function SimulatorScreen() {
     await deleteFlight(f.id);
     reload();
   };
+
+  const visibleFlights = useMemo(() => applyOrder(flights, order), [flights, order]);
 
   const localStyles = useMemo(() => createLocalStyles(palette), [palette]);
 
@@ -244,8 +250,10 @@ export default function SimulatorScreen() {
 
         {/* A chevron, because the flights below are deliberately off-screen.
             Without it the screen looks like it ends at the card. */}
-        {!isLiveMode && flights.length > 0 && (
-          <Text style={localStyles.moreHint}>⌄  {flights.length} saved flight{flights.length === 1 ? '' : 's'} below</Text>
+        {!isLiveMode && visibleFlights.length > 0 && (
+          <Text style={localStyles.moreHint}>
+            ⌄  {visibleFlights.length} saved flight{visibleFlights.length === 1 ? '' : 's'} below
+          </Text>
         )}
 
         {/* The two things you can ASK the drone for, together. START LIVE used
@@ -280,6 +288,22 @@ export default function SimulatorScreen() {
         )}
 
         {/* Saved flights. Real ones only -- see the note on the flights state. */}
+        {/* The controls only appear once there is a list worth ordering. */}
+        {!isLiveMode && !loading && flights.length > 1 && (
+          <FlightSort
+            order={order}
+            onChange={setOrder}
+            total={flights.length}
+            shown={visibleFlights.length}
+          />
+        )}
+
+        {!isLiveMode && !loading && flights.length > 0 && visibleFlights.length === 0 && (
+          <Surface tone="glass" style={localStyles.banner}>
+            <Text style={localStyles.bannerText}>No flights match that filter.</Text>
+          </Surface>
+        )}
+
         {!isLiveMode && !loading && flights.length === 0 && (
           <Surface tone="glass" style={localStyles.banner}>
             <Text style={localStyles.bannerText}>
@@ -288,8 +312,12 @@ export default function SimulatorScreen() {
           </Surface>
         )}
 
-        {!isLiveMode && flights.map((flight, i) => (
-          <Reveal key={flight.id} index={Math.min(i, 6)} style={localStyles.flightRow}>
+        {/* NOT WRAPPED IN Reveal. Every card used to mount its own animated
+            view with its own shared value, and a list of them made the screen
+            slow to settle and the scroll stutter. The panels above still
+            animate; rows in a list do not need to. */}
+        {!isLiveMode && visibleFlights.map((flight) => (
+          <View key={flight.id} style={localStyles.flightRow}>
             {renamingId === flight.id ? (
               <View style={localStyles.renameBox}>
                 <TextInput
@@ -334,7 +362,7 @@ export default function SimulatorScreen() {
                 </View>
               </>
             )}
-          </Reveal>
+          </View>
         ))}
       </ScrollView>
 

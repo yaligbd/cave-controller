@@ -252,13 +252,11 @@ export async function listFlights(): Promise<StoredFlight[]> {
         console.warn(`[flights] could not read ${n}, skipping`);
       }
     }
-    // Starred flights first, then newest first within each group. A flight is
-    // starred precisely because it is worth coming back to, and the newest
-    // flight pushes it down the list within an afternoon of testing otherwise.
-    return out.sort((a, b) => {
-      if (!!a.favourite !== !!b.favourite) return a.favourite ? -1 : 1;
-      return b.savedAt - a.savedAt;
-    });
+    // Newest first, and STARRING DOES NOT REORDER. Sorting favourites to the
+    // top meant the card slid out from under the thumb that had just tapped it,
+    // which is disorienting enough to feel like a bug. The Simulator screen has
+    // an explicit "favourites" sort for anyone who wants that order.
+    return out.sort((a, b) => b.savedAt - a.savedAt);
   } catch (e) {
     console.warn('[flights] list failed:', e);
     return [];

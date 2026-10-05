@@ -5,6 +5,7 @@ import Screen from '@/components/ui/Screen';
 import Surface from '@/components/ui/Surface';
 import { alpha, Palette, radius, spacing, type } from '@/constants/theme';
 import { BleStatus, useDroneConnection } from '@/contexts/DroneConnectionContext';
+import { lipoPercent, packVolts } from '@/services/Battery';
 import { describeDroneError } from '@/services/DroneErrors';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,32 +25,6 @@ const CHECKLIST_ITEMS: { label: string; paramName: string; route?: string }[] = 
   { label: 'Multi-ranger', paramName: 'deck.bcMultiranger', route: '/sensors' },
   { label: 'CaveBat firmware', paramName: 'mission.state' },
 ];
-
-// LiPo open-circuit voltage -> approximate remaining charge. Piecewise linear
-// between these reference points; not a real discharge curve, just enough to
-// give a rough sense of "fine / getting low / land now".
-const LIPO_CURVE: [voltage: number, percent: number][] = [
-  [4.2, 100],
-  [4.0, 75],
-  [3.85, 50],
-  [3.7, 25],
-  [3.3, 0],
-];
-
-function lipoPercent(voltage: number): number {
-  if (voltage >= LIPO_CURVE[0][0]) return 100;
-  const last = LIPO_CURVE[LIPO_CURVE.length - 1];
-  if (voltage <= last[0]) return 0;
-  for (let i = 0; i < LIPO_CURVE.length - 1; i++) {
-    const [vHigh, pHigh] = LIPO_CURVE[i];
-    const [vLow, pLow] = LIPO_CURVE[i + 1];
-    if (voltage <= vHigh && voltage >= vLow) {
-      const t = (voltage - vLow) / (vHigh - vLow);
-      return pLow + t * (pHigh - pLow);
-    }
-  }
-  return 0;
-}
 
 type MarkState = 'disconnected' | 'checking' | 'present' | 'absent';
 
@@ -279,19 +254,9 @@ export default function ConnectScreen() {
           )}
 
           {(() => {
-            // tele.vbat is cavebat.c's copy; pm.vbat is the stock variable that
-            // exists on any firmware. Falling back means the battery still reads
-            // out if the drone is running something other than CaveBat, instead
-            // of silently showing nothing and looking broken.
-            // MIND THE UNITS. tele.vbat is uint16 MILLIVOLTS from cavebat.c;
-            // pm.vbat is a float in VOLTS from the stock firmware. Dividing
-            // both by 1000 would render a healthy 4.03V pack as 0.004V.
-            const teleMv = logValues.get('tele.vbat');
-            const stockV = logValues.get('pm.vbat');
-            const vbat =
-              teleMv !== undefined ? teleMv / 1000
-              : stockV !== undefined ? stockV
-              : undefined;
+            // Both the units question and the fallback to the stock variable
+            // live in services/Battery.ts, which the header strip shares.
+            const vbat = packVolts(logValues);
             // Published by cavebat.c: 1 = enough battery to attempt takeoff.
             // The firmware refuses takeoff on its own; this only mirrors that
             // decision so a refusal is not mistaken for the app being broken.

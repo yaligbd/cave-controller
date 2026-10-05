@@ -104,13 +104,13 @@ export default function LogsScreen() {
             </Surface>
           </Reveal>
         ) : (
-          entries.map((entry, i) => {
+          entries.map((entry) => {
             const colour = colourFor(entry.level);
             const open = expanded.has(entry.id);
             return (
-              // Keyed on the entry id, so a fault that arrives while the screen
-              // is open slides in rather than appearing fully drawn.
-              <Reveal key={entry.id} index={Math.min(i, 6)} style={local.cardWrap}>
+              // NOT a Reveal. A fault log can be long, and one animated view
+              // per row made the screen slow to settle and the scroll stutter.
+              <View key={entry.id} style={local.cardWrap}>
               {/* No shadow: the log is a scrolling list and these are rows in
                   it. The level colour on the left edge separates them. */}
               <Surface level="none" padded={false} style={[local.card, { borderLeftColor: colour }]}>
@@ -161,7 +161,7 @@ export default function LogsScreen() {
                   </>
                 )}
               </Surface>
-              </Reveal>
+              </View>
             );
           })
         )}
