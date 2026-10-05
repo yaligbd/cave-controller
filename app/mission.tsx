@@ -150,7 +150,7 @@ export default function MissionScreen() {
     ready: palette.ready,
   };
   const STATUS_BG: Record<StatusLevel, string> = {
-    muted: palette.surface,
+    muted: palette.surfaceRaised,
     warn: palette.warnBg,
     ready: palette.readyBg,
   };

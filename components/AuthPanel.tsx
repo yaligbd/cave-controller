@@ -11,7 +11,6 @@
 
 import BatIcon from '@/components/BatIcon';
 import Button from '@/components/ui/Button';
-import { Gradient } from '@/components/ui/Gradient';
 import Reveal from '@/components/ui/Reveal';
 import Surface from '@/components/ui/Surface';
 import { alpha, radius, shadow, spacing, type } from '@/constants/theme';
@@ -198,7 +197,6 @@ export default function AuthPanel({ mode }: { mode: Mode }) {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <Gradient colors={palette.gradBackdrop} />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}

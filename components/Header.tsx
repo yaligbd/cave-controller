@@ -120,6 +120,7 @@ export default function Header() {
           direction: 'ltr',
           flexDirection: 'row',
           alignItems: 'center',
+          gap: spacing.xs,
         },
         // The active tab is a filled pill rather than a colour change on the
         // text alone. On a phone held at arm's length a tinted word is easy to
@@ -127,14 +128,17 @@ export default function Header() {
         navItem: {
           minHeight: 36,
           paddingVertical: spacing.sm,
-          paddingHorizontal: spacing.md,
-          marginHorizontal: 2,
+          paddingHorizontal: spacing.lg,
           borderRadius: radius.pill,
+          borderWidth: 1,
+          borderColor: palette.border,
+          backgroundColor: alpha(palette.textSecondary, 0.06),
           justifyContent: 'center',
           alignItems: 'center',
         },
         navItemActive: {
-          backgroundColor: alpha(palette.accent, 0.16),
+          backgroundColor: alpha(palette.accent, 0.18),
+          borderColor: alpha(palette.accent, 0.55),
         },
         navText: {
           fontFamily: type.sansMedium,
@@ -183,15 +187,23 @@ export default function Header() {
             const active = index === activeIndex;
             return (
               <Link key={item.label} href={item.href} asChild>
-                <TouchableOpacity style={[localStyles.navItem, active && localStyles.navItemActive]}>
-                  <Text
-                    style={[
-                      localStyles.navText,
-                      { color: active ? palette.accent : palette.textSecondary },
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
+                {/* THE PILL IS AN INNER VIEW, NOT THE TOUCHABLE. <Link asChild>
+                    clones its child with props of its own, which replaced the
+                    TouchableOpacity's style -- so the padding never reached the
+                    screen and the five labels rendered as one long word,
+                    "ConnectMissionSimulatorLogsSettings". A plain View inside
+                    is beyond its reach. */}
+                <TouchableOpacity activeOpacity={0.7}>
+                  <View style={[localStyles.navItem, active && localStyles.navItemActive]}>
+                    <Text
+                      style={[
+                        localStyles.navText,
+                        { color: active ? palette.accent : palette.textSecondary },
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               </Link>
             );

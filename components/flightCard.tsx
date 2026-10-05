@@ -32,7 +32,6 @@
 // ===========================================================================
 
 import { Tappable } from '@/components/ui/Button';
-import { Gradient } from '@/components/ui/Gradient';
 import { alpha, Palette, radius, shadow, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { flightKind, type FlightKind } from '@/services/FlightStore';
@@ -82,17 +81,12 @@ export default function FlightCard({ flight, onPress, selected }: FlightCardProp
       <View
         style={[
           s.card,
-          { backgroundColor: tone.bg(palette), borderColor: tone.line(palette) },
-          selected && { borderColor: palette.accent, borderWidth: 2 },
+          // The kind's colour as a left edge rather than a gradient wash: the
+          // same signal, legible down a scrolling list, and free to draw.
+          { backgroundColor: tone.bg(palette), borderColor: tone.line(palette), borderLeftWidth: 4 },
+          selected && { borderColor: palette.accent, borderWidth: 2, borderLeftWidth: 4 },
         ]}
       >
-        {/* The kind's own colour, bled across the top of the card. It is the
-            fastest way to tell a drone recording from a phone one in a list,
-            which matters because opening the wrong one shows nonsense. */}
-        <Gradient
-          colors={[alpha(tone.line(palette), 0.22), 'rgba(0,0,0,0)']}
-          style={{ bottom: undefined, height: 64 }}
-        />
       <View style={s.header}>
         <Text style={s.title} numberOfLines={1}>{flight.name}</Text>
         <View style={[s.badge, { backgroundColor: alpha(tone.line(palette), 0.18) }]}>

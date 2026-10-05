@@ -154,7 +154,7 @@ export default function SimulatorScreen() {
   return (
     <Screen>
       <Header />
-      
+
       <ScrollView style={styles.bodyContainer} contentContainerStyle={{ paddingBottom: spacing.xxl }}>
         {/* 1. 3D Viewer at the top */}
         <View style={localStyles.simulatorContainer}>
@@ -184,7 +184,7 @@ export default function SimulatorScreen() {
               {isLiveMode ? 'Live Flight Mode' : (selectedFlight?.name ?? 'No flight selected')}
             </Text>
           </View>
-          
+
           {!isLiveMode ? (
             selectedFlight ? (
               <View style={localStyles.statGrid}>
@@ -351,12 +351,12 @@ function createLocalStyles(palette: Palette) {
       // so.
       height: Math.round(Dimensions.get('window').height * 0.55),
       width: '100%',
-      borderWidth: 1, 
-      borderColor: palette.border,
-      borderRadius: radius.sm, 
+      borderWidth: 1,
+      borderColor: palette.borderStrong,
+      borderRadius: radius.md,
       backgroundColor: palette.bg,
       marginBottom: spacing.md, // Pulled slightly tighter to group with the dashboard below
-      overflow: 'hidden', 
+      overflow: 'hidden',
     },
     moreHint: {
       fontFamily: type.sansMedium,

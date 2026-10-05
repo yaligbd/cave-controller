@@ -179,7 +179,7 @@ export default function ConnectScreen() {
     fault: palette.fault,
   };
   const CONN_BG: Record<ConnLevel, string> = {
-    muted: palette.surface,
+    muted: palette.surfaceRaised,
     warn: palette.warnBg,
     ready: palette.readyBg,
     fault: palette.faultBg,
