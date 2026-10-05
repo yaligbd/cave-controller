@@ -48,7 +48,7 @@ import {
   type StoredFlight,
 } from '@/services/FlightStore';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Dimensions, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Dimensions, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useDialog } from '@/contexts/DialogContext';
 import { useDroneConnection } from '@/contexts/DroneConnectionContext';
@@ -69,6 +69,12 @@ export default function SimulatorScreen() {
   // data is readable while the 3D view is still being built.
   const [dataFlight, setDataFlight] = useState<StoredFlight | null>(null);
   const [downloading, setDownloading] = useState(false);
+  // Flights are read from AsyncStorage, which takes long enough to see. Until
+  // the first read lands we do not know whether there are any, and "No flights
+  // yet" is a claim we cannot make -- it flashed up on every visit to this
+  // screen and then vanished as the real ones arrived, which reads as the app
+  // losing the flights and finding them again.
+  const [loading, setLoading] = useState(true);
 
   // How many samples the drone says it is holding. 0 means there is nothing to
   // fetch, so the button can say so instead of running a pointless transfer.
@@ -102,16 +108,18 @@ export default function SimulatorScreen() {
   // Reload on every focus, so a flight downloaded on another screen appears
   // here without needing the app restarted.
   const reload = useCallback(() => {
-    listFlights().then((list) => {
-      setFlights(list);
-      setSelectedFlight((cur) => {
-        if (cur) {
-          const still = list.find((f) => f.id === cur.id);
-          if (still) return still;
-        }
-        return list[0] ?? null;
-      });
-    });
+    listFlights()
+      .then((list) => {
+        setFlights(list);
+        setSelectedFlight((cur) => {
+          if (cur) {
+            const still = list.find((f) => f.id === cur.id);
+            if (still) return still;
+          }
+          return list[0] ?? null;
+        });
+      })
+      .finally(() => setLoading(false));
   }, []);
   useFocusEffect(useCallback(() => { reload(); }, [reload]));
 
@@ -160,6 +168,13 @@ export default function SimulatorScreen() {
         <View style={localStyles.simulatorContainer}>
           {isLiveMode ? (
             <SimulatorWebView livePoint={livePoint} />
+          ) : loading ? (
+            <View style={localStyles.emptyViewer}>
+              <ActivityIndicator size="large" color={palette.accent} />
+              <Text style={[localStyles.emptyText, { marginTop: spacing.lg }]}>
+                Loading saved flights…
+              </Text>
+            </View>
           ) : selectedFlight ? (
             <SimulatorWebView flightData={selectedFlight.flightPath} />
           ) : (
@@ -181,7 +196,11 @@ export default function SimulatorScreen() {
                 off the row. Android does not hit-test a view drawn outside its
                 parent, so the button was both half off-screen AND dead. */}
             <Text style={[localStyles.detailTitle, { flex: 1, marginRight: 8 }]} numberOfLines={1}>
-              {isLiveMode ? 'Live Flight Mode' : (selectedFlight?.name ?? 'No flight selected')}
+              {isLiveMode
+                ? 'Live Flight Mode'
+                : loading
+                  ? 'Loading…'
+                  : (selectedFlight?.name ?? 'No flight selected')}
             </Text>
           </View>
 
@@ -193,7 +212,7 @@ export default function SimulatorScreen() {
                 <Stat palette={palette} label="Distance" value={`${selectedFlight.distance} m`} />
                 <Stat palette={palette} label="Samples" value={String(selectedFlight.flightPath.time.length)} />
               </View>
-            ) : (
+            ) : loading ? null : (
               <Text style={localStyles.detailRow}>Nothing downloaded yet.</Text>
             )
           ) : (
@@ -252,7 +271,7 @@ export default function SimulatorScreen() {
         )}
 
         {/* Saved flights. Real ones only -- see the note on the flights state. */}
-        {!isLiveMode && flights.length === 0 && (
+        {!isLiveMode && !loading && flights.length === 0 && (
           <Surface tone="glass" style={localStyles.banner}>
             <Text style={localStyles.bannerText}>
               No saved flights. Fly a mission and download it from the drone.
