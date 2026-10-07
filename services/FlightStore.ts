@@ -45,6 +45,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import type { Flight, FlightData } from '@/types/flightT';
 import { getPrefs } from './Prefs';
+import { uploadFlight } from './CaveBatServer';
 
 const dir = () => `${FileSystem.documentDirectory}flights/`;
 const fileFor = (id: string) => `${dir()}${id}.json`;
@@ -264,6 +265,10 @@ export async function listFlights(): Promise<StoredFlight[]> {
 }
 
 export async function saveFlight(f: StoredFlight): Promise<boolean> {
+  // Copy it to the signed-in account on the server too. Not awaited: the
+  // network must never delay or fail the save to the phone.
+  void uploadFlight(f);
+
   // The operator can turn keeping flights off. Downloading still works and the
   // flight is still drawn -- it just is not written to the phone. Reported as
   // success, because nothing failed: the app did what it was told.

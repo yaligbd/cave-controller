@@ -8,13 +8,15 @@ import {
   Account,
   AuthBackend,
   loadSession,
-  localAuthBackend,
   saveSession,
 } from '@/services/AuthStore';
+import { httpAuthBackend } from '@/services/CaveBatServer';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-// Swap this for an HttpAuthBackend once the server is up. Nothing else changes.
-const backend: AuthBackend = localAuthBackend;
+// Accounts live on the Cave Bat server, shared with the website, so every
+// uploaded flight belongs to the account that flew it. localAuthBackend (in
+// AuthStore.ts) is still there for working without a server.
+const backend: AuthBackend = httpAuthBackend;
 
 interface AuthApi {
   account: Account | null;

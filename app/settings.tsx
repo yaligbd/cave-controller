@@ -9,7 +9,8 @@ import { useDialog } from '@/contexts/DialogContext';
 import { useDroneConnection } from '@/contexts/DroneConnectionContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { clearLog } from '@/services/ErrorLog';
-import { deleteAllFlights } from '@/services/FlightStore';
+import { uploadFlights } from '@/services/CaveBatServer';
+import { deleteAllFlights, listFlights } from '@/services/FlightStore';
 import { Prefs, setPref, subscribeToPrefs } from '@/services/Prefs';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -69,6 +70,35 @@ export default function SettingsScreen() {
         : 'Something went wrong removing the saved flights. They may still be there.',
       { variant: ok ? 'info' : 'warn' }
     );
+  };
+
+  // Sends every flight on the phone to the signed-in account. Only reads
+  // local storage, never changes it, and the server ignores a flight it
+  // already has -- so this is safe to press any number of times.
+  const [uploading, setUploading] = useState(false);
+  const handleUploadFlights = async () => {
+    if (uploading) return;
+    setUploading(true);
+    try {
+      const flights = await listFlights();
+      if (!flights.length) {
+        await dialog.notify('Nothing to upload', 'There are no flights saved on this phone.');
+        return;
+      }
+      const sent = await uploadFlights(flights);
+      const missing = flights.length - sent;
+      await dialog.notify(
+        missing ? 'Some flights were not uploaded' : 'All flights uploaded',
+        missing
+          ? `${sent} of ${flights.length} flights are on the server. The other ${missing} are still ` +
+              'only on this phone: check the internet connection and that you are signed in, then ' +
+              'try again. The log says why each one failed.'
+          : `All ${flights.length} flights on this phone are on the server. They also stay here.`,
+        { variant: missing ? 'warn' : 'info' }
+      );
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleDeleteLog = async () => {
@@ -140,8 +170,15 @@ export default function SettingsScreen() {
           <Text style={localStyles.cardHeading}>{account?.displayName ?? 'Not signed in'}</Text>
           <Text style={localStyles.bodyText}>{account?.email ?? '—'}</Text>
           <Text style={localStyles.captionText}>
-            Signed in on this phone only. Flights are stored locally and are not synced yet.
+            The same account as on the website. Every new flight is saved on this phone and
+            uploaded to it. Flights saved before uploading existed go up with the button below.
           </Text>
+          <Button
+            label={uploading ? 'Uploading…' : 'Upload all flights to server'}
+            tint={palette.accent}
+            variant="outline"
+            onPress={handleUploadFlights}
+          />
           <Button label="Sign out" tint={palette.fault} variant="outline" onPress={handleSignOut} />
         </Surface>
         </Reveal>
