@@ -90,6 +90,56 @@ function GradientImpl({
 export const Gradient = React.memo(GradientImpl);
 
 /**
+ * The inside of a glass button.
+ *
+ * Two layers, and it takes both to read as glass rather than as a tinted
+ * rectangle. The tint is thinnest across the middle and gathers at the top and
+ * bottom edges, the way colour does in a thick piece of glass. Over the top
+ * half sits a white highlight that fades out by the middle, which is the light
+ * the surface is catching.
+ *
+ * WHY THIS IS NOT TWO <Gradient>s. Each of those is a whole SVG document, and
+ * a button would need two. Both layers are drawn in ONE document here, so a
+ * glass button costs the same as a solid one.
+ *
+ * `tint` MUST BE A PLAIN #RRGGBB COLOUR. The strength of each stop goes in
+ * `stopOpacity`, because react-native-svg ignores any alpha written into the
+ * colour itself -- see splitAlpha above for what that looked like.
+ *
+ * The numbers differ by theme because the same tint behaves differently on
+ * each: on the dark cards it has to be laid on thickly to show at all, and on
+ * the light ones a little is plenty and the highlight does most of the work.
+ */
+function GlassFillImpl({ tint, night }: { tint: string; night: boolean }) {
+  const id = useGradientId();
+  const [top, middle, bottom] = night ? [0.4, 0.22, 0.34] : [0.16, 0.08, 0.24];
+  const highlight = night ? 0.26 : 0.8;
+
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      <Svg width="100%" height="100%" preserveAspectRatio="none">
+        <Defs>
+          <LinearGradient id={`${id}tint`} x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={tint} stopOpacity={top} />
+            <Stop offset="0.5" stopColor={tint} stopOpacity={middle} />
+            <Stop offset="1" stopColor={tint} stopOpacity={bottom} />
+          </LinearGradient>
+          <LinearGradient id={`${id}light`} x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor="#FFFFFF" stopOpacity={highlight} />
+            <Stop offset="1" stopColor="#FFFFFF" stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${id}tint)`} />
+        <Rect x="0" y="0" width="100%" height="50%" fill={`url(#${id}light)`} />
+      </Svg>
+    </View>
+  );
+}
+
+/** Memoised for the same reason Gradient is. */
+export const GlassFill = React.memo(GlassFillImpl);
+
+/**
  * The specular sheen that makes a translucent pane read as glass rather than as
  * a semi-transparent rectangle: bright at the top-left, gone by the middle.
  */

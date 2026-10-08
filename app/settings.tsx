@@ -173,13 +173,24 @@ export default function SettingsScreen() {
             The same account as on the website. Every new flight is saved on this phone and
             uploaded to it. Flights saved before uploading existed go up with the button below.
           </Text>
+          {/* Glass, and apart. These two were flat outlines stacked with no gap
+              between them, so they read as one two-tone block. The margin on
+              the first is what separates them -- Button has none of its own. */}
           <Button
             label={uploading ? 'Uploading…' : 'Upload all flights to server'}
             tint={palette.accent}
-            variant="outline"
+            variant="glass"
+            round="pill"
             onPress={handleUploadFlights}
+            style={{ marginBottom: spacing.md }}
           />
-          <Button label="Sign out" tint={palette.fault} variant="outline" onPress={handleSignOut} />
+          <Button
+            label="Sign out"
+            tint={palette.fault}
+            variant="glass"
+            round="pill"
+            onPress={handleSignOut}
+          />
         </Surface>
         </Reveal>
 

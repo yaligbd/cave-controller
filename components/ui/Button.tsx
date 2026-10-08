@@ -1,4 +1,4 @@
-import { Gradient } from '@/components/ui/Gradient';
+import { GlassFill, Gradient } from '@/components/ui/Gradient';
 import { alpha, radius as radii, shadow, spacing, type } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import * as Haptics from 'expo-haptics';
@@ -17,6 +17,13 @@ import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } fr
  * `solid` lays a white-to-transparent gradient over the tint rather than mixing
  * a second colour, which means any tint gets the same lit-from-above look with
  * no colour arithmetic.
+ *
+ * `glass` is the see-through one: a thin wash of the tint with a highlight
+ * across the top, so the card behind shows through and the colour says what
+ * the button does without shouting it. It is for actions that sit INSIDE a
+ * card. The label is the ordinary text colour, not the tint -- a dark tint on
+ * its own translucent wash is unreadable, which is exactly what was wrong with
+ * the accent-coloured outline buttons this replaced.
  */
 export default function Button({
   label,
@@ -32,13 +39,14 @@ export default function Button({
   onPress?: () => void;
   /** Defaults to the accent colour. */
   tint?: string;
-  variant?: 'solid' | 'outline' | 'ghost';
+  variant?: 'solid' | 'outline' | 'ghost' | 'glass';
   disabled?: boolean;
   icon?: React.ReactNode;
   style?: StyleProp<ViewStyle>;
   round?: keyof typeof radii;
 }) {
-  const { palette } = useTheme();
+  const { palette, mode } = useTheme();
+  const night = mode !== 'day';
   const colour = disabled ? palette.borderStrong : (tint ?? palette.accent);
 
   // A button that does not move when touched feels unresponsive on a phone in
@@ -52,12 +60,26 @@ export default function Button({
   // White on a solid fill in both themes: the tints are all mid-to-dark enough
   // to carry white, and a label that changed colour with the theme would make
   // the same button look like two different controls.
-  const textColour = disabled ? palette.textMuted : variant === 'solid' ? '#FFFFFF' : colour;
+  const textColour =
+    disabled ? palette.textMuted
+    : variant === 'solid' ? '#FFFFFF'
+    : variant === 'glass' ? palette.textPrimary
+    : colour;
 
   const fill: ViewStyle =
     variant === 'solid' ? { backgroundColor: colour }
     : variant === 'outline' ? { backgroundColor: alpha(colour, 0.12), borderWidth: 1, borderColor: colour }
+    : variant === 'glass' ? {
+        backgroundColor: alpha(colour, night ? 0.16 : 0.1),
+        borderWidth: 1,
+        borderColor: alpha(colour, night ? 0.55 : 0.4),
+      }
     : { backgroundColor: 'transparent' };
+
+  // Where the top highlight starts and stops. It has to stay clear of the
+  // rounded corners, and on a pill those are half the button's height, not the
+  // 999 the radius token says.
+  const cornerInset = Math.min(radii[round], 20);
 
   return (
     <Animated.View style={[animated, style]}>
@@ -91,6 +113,22 @@ export default function Button({
       >
         {variant === 'solid' && (
           <Gradient colors={['rgba(255,255,255,0.22)', 'rgba(255,255,255,0)']} />
+        )}
+        {variant === 'glass' && <GlassFill tint={colour} night={night} />}
+        {/* The bright line along the top edge, where glass catches the light.
+            The same trick Surface uses on every card. */}
+        {variant === 'glass' && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: cornerInset,
+              right: cornerInset,
+              height: 1,
+              backgroundColor: night ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.95)',
+            }}
+          />
         )}
         {icon}
         <Text
