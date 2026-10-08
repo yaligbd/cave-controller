@@ -13,10 +13,17 @@
 //
 //   mission.timer       how long the flight lasts, in seconds
 //   mission.height      hover altitude, in mm
-//   mission.sampledist  recording spacing
 //   mission.wallfollow  0 = hover, 1 = follow the wall on the RIGHT,
 //                       2 = follow the wall on the LEFT
 //   mission.state = 1   GO. Everything above must already be set.
+//
+// mission.sampledist IS NOT SENT ANY MORE, and the "Measure Distance" field
+// that set it is gone. The firmware registers that parameter and then never
+// reads it: the recording is on a clock, one sample every 1000 ms
+// (cavebat_mission.c), whatever distance was asked for. The field looked like
+// a setting, was validated like one, and changed nothing. The parameter is
+// still in the firmware, and still listed in CrtpService.ts, because the
+// firmware still publishes it -- it is simply no longer written.
 //
 // The settings are written BEFORE the state, and the state is written last on
 // purpose. Reordering this launches the drone on whatever settings happened to
@@ -79,8 +86,6 @@ const TIMER_MIN = 1;
 const TIMER_MAX = 120;
 const HEIGHT_MIN = 200;
 const HEIGHT_MAX = 1500;
-const SAMPLEDIST_MIN = 5;
-const SAMPLEDIST_MAX = 100;
 
 type StatusLevel = 'muted' | 'warn' | 'ready';
 
@@ -126,7 +131,6 @@ export default function MissionScreen() {
 
   const [timer, setTimer] = useState(10);
   const [height, setHeight] = useState(500);
-  const [sampleDist, setSampleDist] = useState(10);
   // Matches mission.wallfollow in the firmware exactly: 0 hover, 1 right,
   // 2 left. Kept as the wire value rather than a friendlier enum so there is
   // no mapping table to get out of step with the drone.
@@ -162,9 +166,6 @@ export default function MissionScreen() {
     if (!Number.isFinite(height) || height < HEIGHT_MIN || height > HEIGHT_MAX) {
       return `Altitude must be between ${HEIGHT_MIN} and ${HEIGHT_MAX} mm.`;
     }
-    if (!Number.isFinite(sampleDist) || sampleDist < SAMPLEDIST_MIN || sampleDist > SAMPLEDIST_MAX) {
-      return `Measure distance must be between ${SAMPLEDIST_MIN} and ${SAMPLEDIST_MAX} cm.`;
-    }
     return null;
   };
 
@@ -182,12 +183,6 @@ export default function MissionScreen() {
         await setParam('mission.height', height);
       } else {
         console.log('[mission] firmware has no mission.height parameter — skipping altitude');
-      }
-
-      if (params.has('mission.sampledist')) {
-        await setParam('mission.sampledist', sampleDist);
-      } else {
-        console.log('[mission] firmware has no mission.sampledist parameter — skipping sample distance');
       }
 
       // Always written, never assumed. The firmware defaults this to 0, but a
@@ -325,7 +320,7 @@ export default function MissionScreen() {
 
         <Reveal index={1} style={localStyles.block}>
         <Surface level="md">
-          {/* The three numbers go through our own keypad rather than the system
+          {/* The two numbers go through our own keypad rather than the system
               keyboard, which on Android covers the Take Off and Abort buttons
               and offers a decimal point for values that are whole. */}
           <NumberField
@@ -347,16 +342,6 @@ export default function MissionScreen() {
             max={HEIGHT_MAX}
             step={50}
             presets={[300, 500, 800, 1000]}
-          />
-          <NumberField
-            label="Measure Distance"
-            unit="cm"
-            value={sampleDist}
-            onChange={setSampleDist}
-            min={SAMPLEDIST_MIN}
-            max={SAMPLEDIST_MAX}
-            step={5}
-            presets={[5, 10, 25, 50]}
           />
 
           <Text style={localStyles.fieldLabel}>Flight Mode</Text>
